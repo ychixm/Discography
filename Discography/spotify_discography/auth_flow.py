@@ -139,13 +139,13 @@ def _decrypt(ciphertext: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _load_config_raw() -> dict:
-    config_path = os.environ.get("SPOTIFY_CONFIG_PATH", "config.json")
+    config_path = os.environ.get("SPOTIFY_CONFIG_PATH", config._CONFIG_PATH)
     with open(config_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def _save_config_raw(data: dict):
-    config_path = os.environ.get("SPOTIFY_CONFIG_PATH", "config.json")
+    config_path = os.environ.get("SPOTIFY_CONFIG_PATH", config._CONFIG_PATH)
     tmp = config_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)

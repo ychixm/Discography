@@ -15,7 +15,7 @@ import json
 import os
 import re
 from urllib.parse import urlparse
-
+from . import config as _cfg
 
 class ConfigurationError(Exception):
     """Erreur de configuration — affichée dans la tray et dans les logs."""
@@ -41,7 +41,7 @@ def validate(config_path: str | None = None) -> dict:
     Retourne le dict brut si tout est valide.
     Lève ConfigurationError avec un message détaillé sinon.
     """
-    path = config_path or os.environ.get("SPOTIFY_CONFIG_PATH", "config.json")
+    path = config_path or os.environ.get("SPOTIFY_CONFIG_PATH", _cfg._CONFIG_PATH)
 
     # ── Existence du fichier ──────────────────────────────────────────────────
     if not os.path.exists(path):
