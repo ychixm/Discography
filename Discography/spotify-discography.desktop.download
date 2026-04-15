@@ -1,0 +1,18 @@
+[Desktop Entry]
+Version=1.1
+Type=Application
+Name=Spotify Discography
+Comment=Synchronise automatiquement vos discographies Spotify en playlists
+# Remplacez /opt/SpotifyDiscography par le chemin réel d'installation
+Exec=/usr/bin/python3 /opt/SpotifyDiscography/launcher_linux.py
+Icon=spotify
+Terminal=false
+Categories=Audio;Music;Network;
+StartupNotify=false
+Keywords=spotify;music;playlist;discography;
+
+# Pour lancer en arrière-plan (mode daemon) :
+# Exec=/usr/bin/python3 /opt/SpotifyDiscography/launcher_linux.py --daemon
+
+# Pour démarrage automatique, copiez ce fichier dans :
+# ~/.config/autostart/spotify-discography.desktop

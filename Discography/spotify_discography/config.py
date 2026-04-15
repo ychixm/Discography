@@ -1,24 +1,16 @@
 import json
 import os
-import sys
 import platform
 
 
 # ── Répertoire de données applicatives (AppData / ~/.local/share) ─────────────
 def _app_data_dir(app_name: str = "SpotifyDiscography") -> str:
-    """
-    Retourne le répertoire de stockage persistant adapté à la plateforme :
-      - Windows : %APPDATA%\\<app_name>          (ex. C:\\Users\\Bob\\AppData\\Roaming\\SpotifyDiscography)
-      - macOS   : ~/Library/Application Support/<app_name>
-      - Linux   : $XDG_DATA_HOME/<app_name>       (défaut : ~/.local/share/<app_name>)
-    Le répertoire est créé automatiquement s'il n'existe pas.
-    """
     system = platform.system()
     if system == "Windows":
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
     elif system == "Darwin":
         base = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
-    else:  # Linux et autres POSIX
+    else:
         base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
     path = os.path.join(base, app_name)
     os.makedirs(path, exist_ok=True)
@@ -27,15 +19,29 @@ def _app_data_dir(app_name: str = "SpotifyDiscography") -> str:
 
 APP_DATA_DIR: str = _app_data_dir()
 
-_CONFIG_PATH = os.environ.get("SPOTIFY_CONFIG_PATH", "config.json")
+# ── Emplacement de config.json ────────────────────────────────────────────────
+# Priorité :
+#   1. Variable d'environnement SPOTIFY_CONFIG_PATH (override explicite)
+#   2. APP_DATA_DIR/config.json  (emplacement standard, même dossier que la DB)
+# L'ancien emplacement (dossier du script) n'est plus utilisé.
+_CONFIG_PATH: str = os.environ.get(
+    "SPOTIFY_CONFIG_PATH",
+    os.path.join(APP_DATA_DIR, "config.json"),
+)
 
-with open(_CONFIG_PATH, "r", encoding="utf-8") as _f:
-    _RAW = json.load(_f)
+# Chargement défensif : si config.json est absent (premier démarrage, flow setup),
+# on initialise _RAW à un dict vide. Les valeurs dépendantes du fichier resteront
+# à leurs défauts ou vides — elles ne sont pas utilisées pendant le flow setup.
+try:
+    with open(_CONFIG_PATH, "r", encoding="utf-8") as _f:
+        _RAW = json.load(_f)
+except FileNotFoundError:
+    _RAW = {}
 
-# OAuth
-CLIENT_ID: str     = _RAW["client_id"]
-CLIENT_SECRET: str = _RAW["client_secret"]
-REDIRECT_URI: str  = _RAW["redirect_uri"]
+# OAuth — vides si config absent (flow setup en cours)
+CLIENT_ID: str     = _RAW.get("client_id", "")
+CLIENT_SECRET: str = _RAW.get("client_secret", "")
+REDIRECT_URI: str  = _RAW.get("redirect_uri", "http://127.0.0.1:8888/callback")
 
 SCOPES = [
     "user-read-private",
@@ -71,8 +77,7 @@ RETRY_BASE_DELAY: float = _RAW.get("retry_base_delay_seconds", 1.0)
 DELAY_BETWEEN_ARTISTS: float = _RAW.get("delay_between_artists_seconds", 1.0)
 INCLUDE_GROUPS: str          = _RAW.get("include_groups", "album,single,compilation,appears_on")
 
-# Stockage — les chemins par défaut pointent vers APP_DATA_DIR.
-# L'utilisateur peut les surcharger avec des chemins absolus dans config.json.
+# Stockage — chemins dans APP_DATA_DIR par défaut.
 STATE_DB_PATH: str = _RAW.get(
     "state_db_path",
     os.path.join(APP_DATA_DIR, "state.db"),
@@ -93,20 +98,14 @@ MAX_ARTISTS_PER_RUN: int = _RAW.get("max_artists_per_run", 0)
 MARKET: str              = _RAW.get("market", "FR")
 
 # ── Mode daemon ───────────────────────────────────────────────────────────────
-# Intervalle entre deux rescans complets du même artiste (en secondes).
 SCAN_INTERVAL: int = _RAW.get("scan_interval_seconds", 7 * 24 * 3600)
 
-# Intervalle de rechargement de la liste des artistes suivis.
-# Stocké en JOURS dans config.json ("followed_refresh_interval_days").
-# Valeur par défaut : 1 jour.
-# Converti en secondes pour usage interne.
 _followed_days: float = float(_RAW.get("followed_refresh_interval_days", 1))
 if _followed_days <= 0:
     raise ValueError("followed_refresh_interval_days doit être > 0")
 FOLLOWED_REFRESH_INTERVAL: int = int(_followed_days * 86400)
 
-# Délai minimum entre la fin d'un cycle et le début du suivant (en secondes).
-CYCLE_MIN_INTERVAL: int = _RAW.get("cycle_min_interval_seconds", 300)  # 5 min
+CYCLE_MIN_INTERVAL: int = _RAW.get("cycle_min_interval_seconds", 300)
 
 # Dashboard
 DASHBOARD_PORT: int = _RAW.get("dashboard_port", 8080)

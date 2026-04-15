@@ -237,10 +237,33 @@ def _blacklist_track_rw(artist_id: str, track_id: str) -> dict:
 
 
 def _create_config_file(data: dict) -> dict:
-    """Crée un config.json minimal depuis la page de setup."""
-    config_path = os.environ.get("SPOTIFY_CONFIG_PATH", "config.json")
+    """
+    Crée config.json dans APP_DATA_DIR (même emplacement que la DB et les logs).
+    Le chemin effectif est celui que config._CONFIG_PATH utilise.
+    """
+    # On reconstruit le chemin de la même façon que config.py,
+    # sans dépendre d'un import de config (qui pourrait être périmé).
+    import platform
+
+    def _app_data_dir() -> str:
+        system = platform.system()
+        if system == "Windows":
+            base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        elif system == "Darwin":
+            base = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+        else:
+            base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+        path = os.path.join(base, "SpotifyDiscography")
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    config_path = os.environ.get(
+        "SPOTIFY_CONFIG_PATH",
+        os.path.join(_app_data_dir(), "config.json"),
+    )
+
     if os.path.exists(config_path):
-        return {"error": "config.json existe déjà"}
+        return {"error": f"config.json existe déjà ({config_path})"}
     try:
         payload = {
             "client_id":     data["client_id"],
@@ -251,16 +274,13 @@ def _create_config_file(data: dict) -> dict:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
         os.replace(tmp, config_path)
-        return {"ok": True}
+        logger.info("config.json créé dans : %s", config_path)
+        return {"ok": True, "path": config_path}
     except Exception as e:
         return {"error": str(e)}
 
 
 def _rate_limit_intervals_list(limit: int = 100) -> list:
-    """
-    Retourne les derniers intervalles entre 429, du plus récent au plus ancien.
-    total_calls = ok_calls + fail_calls est calculé ici.
-    """
     try:
         conn = _db_connect()
         rows = conn.execute("""
@@ -282,7 +302,6 @@ def _rate_limit_intervals_list(limit: int = 100) -> list:
 
 
 def _rate_limit_stats() -> dict:
-    """Agrégats globaux sur tous les intervalles persistés."""
     try:
         conn = _db_connect()
         row = conn.execute("""
