@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spotify Discography — Configuration initiale</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0b; --bg2: #111114; --bg3: #18181d;
+  --border: #2a2a35; --border2: #3a3a48;
+  --accent: #1DB954; --red: #ff4545; --amber: #f59e0b; --blue: #60a5fa;
+  --text: #e2e2ec; --text2: #8888aa; --text3: #555568;
+  --mono: 'JetBrains Mono', monospace; --sans: 'Syne', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text); font-family: var(--mono);
+  font-size: 13px; min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+}
+.card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 36px 40px; width: 520px; max-width: 95vw;
+}
+.logo {
+  width: 44px; height: 44px; border-radius: 50%; background: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 20px;
+  box-shadow: 0 0 28px rgba(29,185,84,0.4);
+}
+.logo svg { width: 24px; height: 24px; fill: #000; }
+h1 { font-family: var(--sans); font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+h1 span { color: var(--accent); }
+.subtitle { font-size: 11px; color: var(--text3); margin-bottom: 28px; }
+.step {
+  display: none; flex-direction: column; gap: 14px;
+  animation: fadeIn 0.2s ease;
+}
+.step.active { display: flex; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(6px);} to {opacity:1;transform:none;} }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+label { font-size: 11px; color: var(--text2); letter-spacing: 0.06em; text-transform: uppercase; }
+input {
+  background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 5px; color: var(--text); font-family: var(--mono);
+  font-size: 12px; padding: 9px 12px; outline: none;
+  transition: border-color 0.15s;
+}
+input:focus { border-color: var(--accent); }
+input.error { border-color: var(--red); }
+.hint { font-size: 10px; color: var(--text3); }
+.hint a { color: var(--blue); text-decoration: none; }
+.hint a:hover { text-decoration: underline; }
+
+.btn {
+  padding: 10px 20px; border-radius: 5px; font-family: var(--mono);
+  font-size: 12px; font-weight: 500; cursor: pointer;
+  border: none; transition: opacity 0.15s;
+}
+.btn:hover { opacity: 0.85; }
+.btn-primary { background: var(--accent); color: #000; }
+.btn-secondary { background: var(--bg3); color: var(--text2); border: 1px solid var(--border2); }
+.btn-row { display: flex; gap: 10px; margin-top: 8px; }
+
+.err-msg {
+  background: rgba(255,69,69,0.08); border: 1px solid rgba(255,69,69,0.25);
+  border-radius: 4px; padding: 8px 12px; font-size: 11px; color: var(--red);
+  display: none;
+}
+.err-msg.show { display: block; }
+
+.ok-msg {
+  background: rgba(29,185,84,0.08); border: 1px solid rgba(29,185,84,0.25);
+  border-radius: 4px; padding: 14px 16px; font-size: 12px; color: var(--accent);
+  text-align: center; line-height: 1.7;
+}
+
+.step-indicator {
+  display: flex; gap: 6px; margin-bottom: 24px;
+}
+.step-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--border2); transition: background 0.2s;
+}
+.step-dot.active { background: var(--accent); }
+.step-dot.done   { background: rgba(29,185,84,0.4); }
+
+.code-block {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 4px;
+  padding: 10px 12px; font-size: 11px; color: var(--text2);
+  word-break: break-all; line-height: 1.6;
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <svg viewBox="0 0 24 24"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+  </div>
+  <h1>Spotify<span>Discography</span></h1>
+  <p class="subtitle">Configuration initiale · aucun fichier config.json détecté</p>
+
+  <div class="step-indicator">
+    <div class="step-dot active" id="dot0"></div>
+    <div class="step-dot" id="dot1"></div>
+    <div class="step-dot" id="dot2"></div>
+  </div>
+
+  <!-- ── Étape 0 : créer l'app Spotify ── -->
+  <div class="step active" id="step0">
+    <p style="font-size:12px;color:var(--text2);line-height:1.7;">
+      Avant de commencer, créez une application Spotify pour obtenir
+      vos identifiants OAuth.
+    </p>
+    <ol style="font-size:12px;color:var(--text2);line-height:2;padding-left:18px;">
+      <li>Allez sur <a href="https://developer.spotify.com/dashboard" target="_blank" style="color:var(--blue)">developer.spotify.com/dashboard</a></li>
+      <li>Cliquez <strong style="color:var(--text)">Create app</strong></li>
+      <li>Renseignez un nom et une description quelconques</li>
+      <li>Dans <em>Redirect URIs</em>, ajoutez : <code style="color:var(--accent)">http://127.0.0.1:8888/callback</code></li>
+      <li>Copiez le <strong style="color:var(--text)">Client ID</strong> et le <strong style="color:var(--text)">Client Secret</strong></li>
+    </ol>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="goStep(1)">J'ai mes identifiants →</button>
+    </div>
+  </div>
+
+  <!-- ── Étape 1 : saisie des identifiants ── -->
+  <div class="step" id="step1">
+    <div class="field">
+      <label>Client ID</label>
+      <input type="text" id="clientId" placeholder="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" maxlength="32" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>Client Secret</label>
+      <input type="password" id="clientSecret" placeholder="••••••••••••••••••••••••••••••••" maxlength="32" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>Redirect URI</label>
+      <input type="text" id="redirectUri" value="http://127.0.0.1:8888/callback" autocomplete="off">
+      <span class="hint">Doit correspondre exactement à ce que vous avez saisi dans le Dashboard Spotify.</span>
+    </div>
+    <div class="err-msg" id="errStep1"></div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="goStep(0)">← Retour</button>
+      <button class="btn btn-primary" onclick="submitConfig()">Créer config.json →</button>
+    </div>
+  </div>
+
+  <!-- ── Étape 2 : confirmation ── -->
+  <div class="step" id="step2">
+    <div class="ok-msg" id="okMsg">
+      ✓ config.json créé avec succès.<br>
+      <span style="font-size:11px;color:var(--text2)">
+        L'application va démarrer automatiquement dans quelques secondes…
+      </span>
+    </div>
+    <div class="code-block" id="configPreview" style="margin-top:8px;"></div>
+  </div>
+</div>
+
+<script>
+let currentStep = 0;
+
+function goStep(n) {
+  document.getElementById('step' + currentStep).classList.remove('active');
+  document.getElementById('dot' + currentStep).classList.remove('active');
+  document.getElementById('dot' + currentStep).classList.add('done');
+  currentStep = n;
+  document.getElementById('step' + n).classList.add('active');
+  document.getElementById('dot' + n).classList.add('active');
+}
+
+function showErr(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.classList.add('show');
+}
+function hideErr(id) {
+  document.getElementById(id).classList.remove('show');
+}
+
+function validateHex32(s) {
+  return /^[0-9a-fA-F]{32}$/.test(s.trim());
+}
+
+async function submitConfig() {
+  hideErr('errStep1');
+
+  const clientId     = document.getElementById('clientId').value.trim();
+  const clientSecret = document.getElementById('clientSecret').value.trim();
+  const redirectUri  = document.getElementById('redirectUri').value.trim();
+
+  if (!validateHex32(clientId)) {
+    showErr('errStep1', 'Client ID invalide — doit contenir exactement 32 caractères hexadécimaux.');
+    document.getElementById('clientId').classList.add('error');
+    return;
+  }
+  document.getElementById('clientId').classList.remove('error');
+
+  if (!validateHex32(clientSecret)) {
+    showErr('errStep1', 'Client Secret invalide — doit contenir exactement 32 caractères hexadécimaux.');
+    document.getElementById('clientSecret').classList.add('error');
+    return;
+  }
+  document.getElementById('clientSecret').classList.remove('error');
+
+  if (!redirectUri.startsWith('http')) {
+    showErr('errStep1', 'Redirect URI invalide — ex: http://127.0.0.1:8888/callback');
+    return;
+  }
+
+  const payload = {
+    client_id:     clientId,
+    client_secret: clientSecret,
+    redirect_uri:  redirectUri,
+  };
+
+  try {
+    const r = await fetch('/api/setup/create-config', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) {
+      showErr('errStep1', data.error || 'Erreur serveur — consultez les logs.');
+      return;
+    }
+
+    // Affiche la conf (sans le secret en clair)
+    const preview = {
+      client_id:    clientId,
+      client_secret: clientSecret.slice(0,4) + '…',
+      redirect_uri:  redirectUri,
+    };
+    document.getElementById('configPreview').textContent =
+      JSON.stringify(preview, null, 2);
+
+    goStep(2);
+
+    // Recharge la page après 3s pour démarrer le monitor
+    setTimeout(() => window.location.href = '/', 3000);
+
+  } catch(e) {
+    showErr('errStep1', 'Impossible de contacter le serveur : ' + e.message);
+  }
+}
+</script>
+</body>
+</html>

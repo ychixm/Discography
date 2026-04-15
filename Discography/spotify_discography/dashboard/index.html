@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spotify Discography — Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#0a0a0b;--bg2:#111114;--bg3:#18181d;
+  --border:#2a2a35;--border2:#3a3a48;
+  --accent:#1DB954;--accent2:#17a349;--accent-dim:rgba(29,185,84,0.12);
+  --red:#ff4545;--amber:#f59e0b;--blue:#60a5fa;--purple:#a78bfa;
+  --muted:#4a4a5a;--text:#e2e2ec;--text2:#8888aa;--text3:#555568;
+  --mono:'JetBrains Mono',monospace;--sans:'Syne',sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13px;min-height:100vh;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.05) 2px,rgba(0,0,0,0.05) 4px)}
+
+/* HEADER */
+.header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:100}
+.header-left{display:flex;align-items:center;gap:14px}
+.logo-mark{width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;box-shadow:0 0 20px rgba(29,185,84,0.4);animation:pulse-glow 3s ease-in-out infinite}
+.logo-mark svg{width:17px;height:17px;fill:#000}
+@keyframes pulse-glow{0%,100%{box-shadow:0 0 20px rgba(29,185,84,0.4)}50%{box-shadow:0 0 34px rgba(29,185,84,0.65)}}
+.header-title{font-family:var(--sans);font-weight:800;font-size:16px;letter-spacing:-0.3px}
+.header-title span{color:var(--accent)}
+.header-sub{font-size:10px;color:var(--text3);letter-spacing:0.06em;margin-top:1px}
+.header-right{display:flex;align-items:center;gap:12px}
+
+/* STATUS BADGES */
+.status-badge{display:flex;align-items:center;gap:7px;padding:5px 13px;border-radius:4px;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;border:1px solid var(--border)}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--muted)}
+.status-badge.running .status-dot{background:var(--accent);animation:blink 1.1s step-start infinite}
+.status-badge.running{border-color:var(--accent-dim);color:var(--accent)}
+.status-badge.idle{color:var(--text3)}
+.status-badge.rate_limited .status-dot{background:var(--amber);animation:blink 0.6s step-start infinite}
+.status-badge.rate_limited{border-color:rgba(245,158,11,0.3);color:var(--amber)}
+.status-badge.stopped .status-dot{background:var(--red);animation:none}
+.status-badge.stopped{border-color:rgba(255,69,69,0.2);color:var(--red)}
+@keyframes blink{50%{opacity:0}}
+
+.conn-indicator{font-size:10px;color:var(--text3);display:flex;align-items:center;gap:5px}
+.conn-dot{width:5px;height:5px;border-radius:50%;background:var(--red)}
+.conn-dot.ok{background:var(--accent)}
+
+/* RATE LIMIT BANNER */
+.rl-banner{display:none;align-items:center;gap:10px;padding:8px 24px;background:rgba(245,158,11,0.08);border-bottom:1px solid rgba(245,158,11,0.25);font-size:11px;color:var(--amber)}
+.rl-banner.show{display:flex}
+.rl-countdown{font-family:var(--sans);font-size:14px;font-weight:800;color:var(--amber);min-width:48px}
+
+/* NAV TABS */
+.nav-tabs{display:flex;gap:2px;padding:0 24px;background:var(--bg2);border-bottom:1px solid var(--border)}
+.nav-tab{padding:9px 16px;font-size:11px;letter-spacing:0.07em;text-transform:uppercase;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;transition:all 0.12s;user-select:none}
+.nav-tab:hover{color:var(--text2)}
+.nav-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* LAYOUT */
+.layout{display:grid;grid-template-columns:260px 1fr;height:calc(100vh - 120px)}
+.sidebar{border-right:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;overflow:hidden}
+.main{display:flex;flex-direction:column;overflow:hidden}
+
+/* PAGE */
+.page{display:none;flex:1;overflow:hidden;flex-direction:column}
+.page.active{display:flex}
+
+/* SIDEBAR */
+.sidebar-section{border-bottom:1px solid var(--border);padding:14px 16px}
+.sidebar-section.grow{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.section-label{font-size:10px;font-weight:500;letter-spacing:0.14em;text-transform:uppercase;color:var(--text3);display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.section-label::after{content:'';flex:1;height:1px;background:var(--border)}
+.config-row{display:flex;justify-content:space-between;padding:4px 0}
+.config-key{font-size:11px;color:var(--text3)}
+.config-val{font-size:11px;color:var(--text)}
+.config-val.green{color:var(--accent)}.config-val.amber{color:var(--amber)}.config-val.red{color:var(--red)}.config-val.blue{color:var(--blue)}.config-val.purple{color:var(--purple)}
+.artist-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.artist-list::-webkit-scrollbar{width:3px}
+.artist-list::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.artist-item{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:4px;cursor:pointer;border:1px solid transparent;transition:background 0.12s}
+.artist-item:hover{background:var(--bg3)}
+.artist-item.scanning{background:rgba(245,158,11,0.07);border-color:rgba(245,158,11,0.18)}
+.artist-item.done{opacity:0.55}
+.artist-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0;background:var(--muted)}
+.artist-dot.scanning{background:var(--amber);animation:blink 0.8s step-start infinite}
+.artist-dot.done{background:var(--accent);animation:none}
+.artist-dot.error{background:var(--red);animation:none}
+.artist-name{flex:1;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.artist-extra{font-size:10px;color:var(--text3);flex-shrink:0}
+.artist-extra.new{color:var(--accent)}
+.tag-cloud{display:flex;flex-wrap:wrap;gap:5px;max-height:72px;overflow-y:auto}
+.tag{padding:2px 9px;border-radius:10px;background:var(--bg3);border:1px solid var(--border);font-size:10.5px;color:var(--text2);white-space:nowrap}
+
+/* DAEMON INFO BANNER */
+.daemon-info{display:flex;gap:16px;padding:8px 22px;background:var(--bg3);border-bottom:1px solid var(--border);font-size:10px;color:var(--text3);flex-shrink:0;flex-wrap:wrap}
+.daemon-info .di{display:flex;align-items:center;gap:5px}
+.daemon-info .di-val{color:var(--text2)}
+.daemon-info .di-val.hl{color:var(--purple)}
+
+/* MAIN TOP */
+.main-top{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:14px;flex-shrink:0}
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.stat-card{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:12px 14px;position:relative;overflow:hidden}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--accent);opacity:0;transition:opacity 0.3s}
+.stat-card.lit::before{opacity:1}
+.stat-label{font-size:10px;color:var(--text3);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px}
+.stat-value{font-family:var(--sans);font-size:26px;font-weight:800;color:var(--text);line-height:1}
+.stat-value.green{color:var(--accent)}.stat-value.blue{color:var(--blue)}.stat-value.red{color:var(--red)}.stat-value.amber{color:var(--amber)}
+.stat-sub{font-size:10px;color:var(--text3);margin-top:4px}
+.stat-sub.up{color:var(--accent)}
+.progress-wrap{display:flex;flex-direction:column;gap:6px}
+.progress-head{display:flex;justify-content:space-between}
+.progress-bar-bg{height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;border:1px solid var(--border)}
+.progress-bar-fill{height:100%;background:var(--accent);border-radius:3px;transition:width 0.7s cubic-bezier(.4,0,.2,1);box-shadow:0 0 10px rgba(29,185,84,0.45)}
+.progress-bar-fill.amber{background:var(--amber);box-shadow:0 0 10px rgba(245,158,11,0.45)}
+.progress-pct{font-size:12px;color:var(--accent);font-weight:500}
+.progress-label{font-size:11px;color:var(--text3)}
+.spark-wrap{display:flex;flex-direction:column;gap:5px}
+.spark-head{display:flex;justify-content:space-between}
+.spark-label{font-size:10px;color:var(--text3);letter-spacing:0.1em;text-transform:uppercase}
+.spark-bars{display:flex;align-items:flex-end;gap:2px;height:36px}
+.spark-bar{flex:1;background:rgba(29,185,84,0.15);border-radius:2px 2px 0 0;min-height:2px;transition:height 0.35s ease;border-top:1px solid rgba(29,185,84,0.3)}
+.spark-bar.hot{background:rgba(29,185,84,0.35);border-color:var(--accent)}
+
+/* PANELS */
+.panels{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;overflow:hidden}
+.panel{display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border);border-bottom:1px solid var(--border)}
+.panel:nth-child(2n){border-right:none}
+.panel:nth-child(3),.panel:nth-child(4){border-bottom:none}
+.panel-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0;gap:8px}
+.panel-title{font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--text2)}
+.panel-badge{font-size:10px;color:var(--text3)}
+.panel-action{font-size:10px;color:var(--text3);cursor:pointer;padding:2px 7px;border:1px solid var(--border);border-radius:3px;transition:all 0.12s;white-space:nowrap}
+.panel-action:hover{color:var(--text);border-color:var(--border2)}
+.panel-body{flex:1;overflow-y:auto;padding:10px 14px}
+.panel-body::-webkit-scrollbar{width:3px}
+.panel-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.search-input{background:var(--bg3);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:11px;padding:4px 9px;outline:none;width:140px;transition:border-color 0.15s}
+.search-input:focus{border-color:var(--accent)}
+.search-input::placeholder{color:var(--text3)}
+
+/* LOGS */
+.log-line{display:flex;gap:8px;padding:2.5px 0;border-bottom:1px solid rgba(42,42,53,0.4);font-size:11px;line-height:1.5;animation:fadeIn 0.18s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.log-ts{color:var(--text3);flex-shrink:0;width:50px}
+.log-lvl{flex-shrink:0;width:38px;font-weight:500}
+.log-lvl.INFO{color:var(--blue)}.log-lvl.WARN{color:var(--amber)}.log-lvl.ERROR{color:var(--red)}.log-lvl.OK{color:var(--accent)}
+.log-msg{color:var(--text2);word-break:break-all}
+
+/* TABLES */
+table{width:100%;border-collapse:collapse}
+th{font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);padding:5px 8px;text-align:left;border-bottom:1px solid var(--border);font-weight:500;position:sticky;top:0;background:var(--bg);cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{color:var(--text2)}
+th .sort-arrow{margin-left:4px;opacity:0.4}
+th.sorted .sort-arrow{opacity:1;color:var(--accent)}
+td{font-size:11px;padding:6px 8px;border-bottom:1px solid rgba(42,42,53,0.4);color:var(--text2)}
+tr:hover td{background:var(--bg3);color:var(--text)}
+
+/* FULL PAGE */
+.full-page{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.fp-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0;gap:10px}
+.fp-title{font-size:11px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--text2)}
+.fp-body{flex:1;overflow-y:auto;padding:0}
+.fp-body::-webkit-scrollbar{width:3px}
+.fp-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.fp-body table th{background:var(--bg2)}
+
+/* ARTIST MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:none;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:10px;width:700px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;overflow:hidden}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal-title{font-family:var(--sans);font-size:16px;font-weight:800}
+.modal-close{font-size:18px;color:var(--text3);cursor:pointer;background:none;border:none;line-height:1;padding:2px 6px}
+.modal-close:hover{color:var(--text)}
+.modal-body{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px}
+.modal-stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.modal-stat{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 12px}
+.modal-stat-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px}
+.modal-stat-val{font-family:var(--sans);font-size:20px;font-weight:800;color:var(--accent)}
+
+/* DB STATS */
+.db-stat-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(42,42,53,0.35)}
+.db-stat-key{font-size:11px;color:var(--text3)}
+.db-stat-val{font-family:var(--sans);font-size:20px;font-weight:800}
+
+/* PLAYLIST ROW */
+.playlist-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(42,42,53,0.4)}
+.playlist-icon{width:32px;height:32px;border-radius:4px;flex-shrink:0;background:var(--bg3);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:13px}
+.playlist-name{font-size:12px;font-weight:500;color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.playlist-id{font-size:10px;color:var(--text3);margin-top:1px}
+.playlist-count{text-align:right;flex-shrink:0}
+.playlist-count .n{font-family:var(--sans);font-size:17px;font-weight:800;color:var(--accent)}
+.playlist-count .l{font-size:10px;color:var(--text3)}
+
+/* BUTTONS */
+.btn-blacklist{font-size:10px;color:var(--red);cursor:pointer;background:none;border:1px solid rgba(255,69,69,0.25);border-radius:3px;padding:1px 7px;transition:all 0.12s;flex-shrink:0}
+.btn-blacklist:hover{background:rgba(255,69,69,0.1)}
+.btn-blacklist:disabled{opacity:0.4;cursor:default}
+
+/* EMPTY */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;color:var(--text3);font-size:11px;text-align:center}
+.empty-icon{font-size:28px;opacity:0.25}
+.error-banner{display:none;background:rgba(255,69,69,0.08);border:1px solid rgba(255,69,69,0.25);padding:8px 14px;font-size:11px;color:var(--red);border-radius:4px;margin:8px 16px 0}
+.error-banner.show{display:block}
+
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="header-left">
+    <div class="logo-mark">
+      <svg viewBox="0 0 24 24"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+    </div>
+    <div>
+      <div class="header-title">Spotify<span>Discography</span> Monitor</div>
+      <div class="header-sub">Daemon permanent · state.db</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="conn-indicator">
+      <div class="conn-dot" id="connDot"></div>
+      <span id="connLabel">Connexion…</span>
+    </div>
+    <div class="status-badge idle" id="statusBadge">
+      <div class="status-dot"></div>
+      <span id="statusText">IDLE</span>
+    </div>
+    <span style="font-size:11px;color:var(--text3);font-variant-numeric:tabular-nums;" id="timerDisplay">00:00</span>
+  </div>
+</header>
+
+<!-- RATE LIMIT BANNER -->
+<div class="rl-banner" id="rlBanner">
+  <span>⚠ Rate limit Spotify — reprise automatique dans</span>
+  <span class="rl-countdown" id="rlCountdown">—</span>
+  <span>secondes</span>
+</div>
+
+<!-- NAV TABS -->
+<div class="nav-tabs">
+  <div class="nav-tab" onclick="switchPage('monitor')">◈ Monitor</div>
+  <div class="nav-tab" onclick="switchPage('albums')">Albums</div>
+  <div class="nav-tab" onclick="switchPage('playlists')">Playlists</div>
+  <div class="nav-tab" onclick="switchPage('ratelimits')">Rate Limits</div>
+  <div class="nav-tab" onclick="switchPage('removed')">Tracks retirées</div>
+  <div class="nav-tab" onclick="switchPage('unavailable')">Indisponibles</div>
+  <div class="nav-tab" onclick="switchPage('excluded')">Exclus</div>
+  <div class="nav-tab" onclick="switchPage('db')">Base</div>
+</div>
+
+<div class="error-banner" id="errorBanner"></div>
+
+<!-- ══ PAGE : MONITOR ══ -->
+<div class="layout" id="page-monitor">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <div class="section-label">Configuration</div>
+      <div id="configGrid">
+        <div class="config-row"><span class="config-key">market</span><span class="config-val green" id="cfgMarket">—</span></div>
+        <div class="config-row"><span class="config-key">include_groups</span><span class="config-val amber" id="cfgGroups">—</span></div>
+        <div class="config-row"><span class="config-key">rate_limit</span><span class="config-val" id="cfgRate">—</span></div>
+        <div class="config-row"><span class="config-key">retry_max</span><span class="config-val" id="cfgRetry">—</span></div>
+        <div class="config-row"><span class="config-key">full_resync</span><span class="config-val red" id="cfgResync">—</span></div>
+        <div class="config-row"><span class="config-key">delay_artists</span><span class="config-val" id="cfgDelay">—</span></div>
+        <div class="config-row"><span class="config-key">max_per_run</span><span class="config-val" id="cfgMax">—</span></div>
+        <div class="config-row"><span class="config-key">refresh_suivis</span><span class="config-val purple" id="cfgFollowedRefresh">—</span></div>
+        <div class="config-row"><span class="config-key">cycle_interval</span><span class="config-val purple" id="cfgCycleInterval">—</span></div>
+      </div>
+    </div>
+    <div class="sidebar-section grow">
+      <div class="section-label">Artistes (<span id="artistCount">0</span>)</div>
+      <div class="artist-list" id="artistList">
+        <div class="empty"><div class="empty-icon">♪</div>Aucun cycle actif</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-label">Exclus (<span id="excludedCountBadge">0</span>)</div>
+      <div class="tag-cloud" id="excludedCloud"><span style="font-size:10px;color:var(--text3);">Aucun</span></div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <!-- Daemon info bar -->
+    <div class="daemon-info" id="daemonInfoBar">
+      <div class="di">Cycle <span class="di-val hl" id="diCycleNum">—</span></div>
+      <div class="di">Artistes suivis : <span class="di-val" id="diFollowed">—</span></div>
+      <div class="di">Prochain refresh suivis : <span class="di-val hl" id="diNextFollowedRefresh">—</span></div>
+      <div class="di">Prochain cycle : <span class="di-val hl" id="diNextCycle">—</span></div>
+    </div>
+
+    <div class="main-top">
+      <div class="stats-row">
+        <div class="stat-card" id="cardA"><div class="stat-label">Artistes traités</div><div class="stat-value green" id="statA">0</div><div class="stat-sub" id="subA">— / 0</div></div>
+        <div class="stat-card" id="cardT"><div class="stat-label">Tracks ajoutées</div><div class="stat-value green" id="statT">0</div><div class="stat-sub up" id="subT">ce cycle</div></div>
+        <div class="stat-card" id="cardC"><div class="stat-label">Appels API</div><div class="stat-value blue" id="statC">0</div><div class="stat-sub" id="subC">albums: 0 · tracks: 0</div></div>
+        <div class="stat-card" id="cardE"><div class="stat-label">Erreurs</div><div class="stat-value" id="statE">0</div><div class="stat-sub" id="subE">429: 0 · 5xx: 0</div></div>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-head">
+          <span class="progress-label">Progression · <span id="currentArtistLabel">En attente</span></span>
+          <span class="progress-pct" id="progressPct">0%</span>
+        </div>
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressBar" style="width:0%"></div></div>
+      </div>
+      <div class="spark-wrap">
+        <div class="spark-head"><span class="spark-label">Activité API · fenêtre 60s</span><span style="font-size:10px;color:var(--text3);" id="sparkInfo">0 appels</span></div>
+        <div class="spark-bars" id="sparkline"></div>
+      </div>
+    </div>
+    <div class="panels">
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">⬡ Logs temps réel</span><span class="panel-action" onclick="clearLogs()">Vider</span></div>
+        <div class="panel-body" id="logPanel"><div class="empty"><div class="empty-icon">▣</div>En attente…</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">◈ Albums récents</span>
+          <input class="search-input" id="albumSearchInline" placeholder="Filtrer…" oninput="filterAlbumsInline()">
+        </div>
+        <div class="panel-body" id="albumPanelInline"><div class="empty"><div class="empty-icon">◈</div>Aucun album</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">◉ Playlists</span><span class="panel-badge" id="playlistCountBadge">0</span></div>
+        <div class="panel-body" id="playlistPanelInline"><div class="empty"><div class="empty-icon">◉</div>Aucune playlist</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">◆ État de la base</span><span style="font-size:10px;color:var(--text3);" id="dbUpdated">—</span></div>
+        <div class="panel-body" id="dbPanel"><div class="empty"><div class="empty-icon">◆</div>Chargement…</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PAGES FULL (identiques à v1) -->
+<div class="full-page" id="page-albums" style="display:none">
+  <div class="fp-header"><span class="fp-title">Albums · base de données</span><div style="display:flex;gap:8px;align-items:center"><input class="search-input" id="albumSearch" placeholder="Filtrer artiste / album…" oninput="renderAlbumsPage()"><span class="panel-action" onclick="exportCsv('albums')">⬇ CSV</span><span class="panel-badge" id="albumCountFull">—</span></div></div>
+  <div class="fp-body" id="albumPageBody"></div>
+</div>
+<div class="full-page" id="page-playlists" style="display:none">
+  <div class="fp-header"><span class="fp-title">Playlists</span><div style="display:flex;gap:8px;align-items:center"><input class="search-input" id="playlistSearch" placeholder="Filtrer…" oninput="renderPlaylistsPage()"><span class="panel-action" onclick="exportCsv('playlists')">⬇ CSV</span><span class="panel-badge" id="playlistCountFull">—</span></div></div>
+  <div class="fp-body" id="playlistPageBody"></div>
+</div>
+<div class="full-page" id="page-ratelimits" style="display:none">
+  <div class="fp-header">
+    <span class="fp-title">Rate Limits · historique des intervalles 429</span>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="panel-action" onclick="loadRateLimits()">⟳ Actualiser</span>
+      <span class="panel-badge" id="rlIntervalCount">—</span>
+    </div>
+  </div>
+  <!-- Agrégats -->
+  <div id="rlStatsBar" style="display:flex;gap:20px;padding:10px 20px;border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap;background:var(--bg2);flex-shrink:0"></div>
+  <!-- Intervalle courant (non clos) -->
+  <div id="rlCurrentBar" style="display:none;align-items:center;gap:16px;padding:7px 20px;background:rgba(29,185,84,0.05);border-bottom:1px solid rgba(29,185,84,0.15);font-size:11px;flex-shrink:0">
+    <span style="color:var(--accent);font-weight:500">▶ Intervalle en cours</span>
+    <span>Réussis : <span style="color:var(--accent)" id="rlCurOk">0</span></span>
+    <span>Échoués : <span style="color:var(--red)" id="rlCurFail">0</span></span>
+    <span>Total : <span style="color:var(--text)" id="rlCurTotal">0</span></span>
+    <span style="color:var(--text3)">depuis <span id="rlCurSince">—</span></span>
+  </div>
+  <div class="fp-body" id="rlPageBody">
+    <div class="empty"><div class="empty-icon">◉</div>Aucun rate limit enregistré</div>
+  </div>
+</div>
+<div class="full-page" id="page-removed" style="display:none">
+  <div class="fp-header"><span class="fp-title">Tracks retirées manuellement</span><div style="display:flex;gap:8px;align-items:center"><input class="search-input" id="removedSearch" placeholder="Filtrer…" oninput="renderRemovedPage()"><span class="panel-badge" id="removedCount">—</span></div></div>
+  <div class="fp-body" id="removedPageBody"><div class="empty"><div class="empty-icon">✓</div>Aucune track retirée</div></div>
+</div>
+<div class="full-page" id="page-unavailable" style="display:none">
+  <div class="fp-header"><span class="fp-title">Tracks indisponibles</span><div style="display:flex;gap:8px;align-items:center"><input class="search-input" id="unavailSearch" placeholder="Filtrer…" oninput="renderUnavailPage()"><span class="panel-badge" id="unavailCount">—</span></div></div>
+  <div class="fp-body" id="unavailPageBody"><div class="empty"><div class="empty-icon">✓</div>Aucune track indisponible</div></div>
+</div>
+<div class="full-page" id="page-excluded" style="display:none">
+  <div class="fp-header"><span class="fp-title">Artistes exclus</span><div style="display:flex;gap:8px;align-items:center"><input class="search-input" id="excludedSearch" placeholder="Filtrer…" oninput="renderExcludedPage()"><span class="panel-badge" id="excludedCountFull">—</span></div></div>
+  <div class="fp-body" id="excludedPageBody"><div class="empty"><div class="empty-icon">—</div>Aucun artiste exclu</div></div>
+</div>
+<div class="full-page" id="page-db" style="display:none">
+  <div class="fp-header"><span class="fp-title">État de la base de données</span><span style="font-size:10px;color:var(--text3);" id="dbUpdatedFull">—</span></div>
+  <div class="fp-body" style="padding:20px" id="dbPageBody"><div class="empty"><div class="empty-icon">◆</div>Chargement…</div></div>
+</div>
+
+<!-- MODAL ARTISTE -->
+<div class="modal-overlay" id="artistModal" onclick="closeArtistModal(event)">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title" id="modalArtistName">Artiste</span><button class="modal-close" onclick="closeArtistModalBtn()">✕</button></div>
+    <div class="modal-body" id="modalBody"><div class="empty"><div class="empty-icon">♪</div>Chargement…</div></div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+//  CONFIG
+// ══════════════════════════════════════════════════════════════════
+const POLL_RUN = 1500;
+const POLL_DB  = 8000;
+
+// ══════════════════════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════════════════════
+let lastLogTs   = 0;
+let timerStart  = null;
+let timerInt    = null;
+let currentPage = 'monitor';
+
+// Rate limit countdown
+let _rlEnd      = 0;
+let _rlInt      = null;
+
+// Data cache
+let _albums    = [], _playlists = [], _excluded = [];
+let _removed   = [], _unavail   = [];
+
+// Sort state
+const _sort = { albums: {col:null,dir:1}, playlists: {col:null,dir:1} };
+
+// Daemon meta (transmis via run_state)
+let _daemonMeta = {};
+
+// ══════════════════════════════════════════════════════════════════
+//  NAVIGATION
+// ══════════════════════════════════════════════════════════════════
+const _pages = ['monitor','albums','playlists','ratelimits','removed','unavailable','excluded','db'];
+function switchPage(name) {
+  currentPage = name;
+  _pages.forEach(p => {
+    const el = document.getElementById('page-' + p);
+    if (!el) return;
+    el.style.display = (p === name) ? (p === 'monitor' ? 'grid' : 'flex') : 'none';
+  });
+  document.querySelectorAll('.nav-tab').forEach((t, i) => t.classList.toggle('active', _pages[i] === name));
+  if (name === 'ratelimits') loadRateLimits();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════════════
+const fmt  = n  => Number(n).toLocaleString('fr-FR');
+const hms  = ts => { const d=new Date(ts*1000); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const date = ts => ts ? new Date(ts*1000).toLocaleDateString('fr-FR') : '—';
+const pad  = n  => String(n).padStart(2,'0');
+const esc  = s  => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const hhmm = s  => { if(!s||s<=0) return '—'; const h=Math.floor(s/3600),m=Math.floor((s%3600)/60); return h>0?`${h}h${pad(m)}m`:`${m}min`; };
+
+async function apiFetch(ep) {
+  const r = await fetch(ep, { cache:'no-store' });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+function setConnected(ok) {
+  document.getElementById('connDot').className   = 'conn-dot' + (ok?' ok':'');
+  document.getElementById('connLabel').textContent = ok ? 'Connecté' : 'Déconnecté';
+  const b = document.getElementById('errorBanner');
+  if (!ok) { b.textContent='Impossible de joindre le serveur.'; b.classList.add('show'); }
+  else b.classList.remove('show');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  RATE LIMIT COUNTDOWN
+// ══════════════════════════════════════════════════════════════════
+function startRLCountdown(retryAfter) {
+  _rlEnd = Date.now() / 1000 + retryAfter;
+  const banner = document.getElementById('rlBanner');
+  banner.classList.add('show');
+  clearInterval(_rlInt);
+  _rlInt = setInterval(() => {
+    const rem = Math.max(0, Math.ceil(_rlEnd - Date.now() / 1000));
+    document.getElementById('rlCountdown').textContent = rem + 's';
+    if (rem <= 0) {
+      clearInterval(_rlInt);
+      banner.classList.remove('show');
+    }
+  }, 500);
+}
+function hideRLBanner() {
+  clearInterval(_rlInt);
+  document.getElementById('rlBanner').classList.remove('show');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  RUN / MONITOR
+// ══════════════════════════════════════════════════════════════════
+function applyRunData(d) {
+  const badge = document.getElementById('statusBadge');
+  badge.className = `status-badge ${d.status}`;
+
+  const statusLabels = {
+    running:      'RUNNING',
+    idle:         'IDLE',
+    rate_limited: 'RATE LIMITED',
+    stopped:      'STOPPED',
+  };
+  document.getElementById('statusText').textContent = statusLabels[d.status] || d.status.toUpperCase();
+
+  // Gestion banner 429
+  if (d.status === 'rate_limited') {
+    const retryAfter = d.stats?.retry_after_last || 60;
+    startRLCountdown(retryAfter);
+    if (_tray) _tray?.set_status?.(`Rate limit — attente ${retryAfter}s`);
+  } else {
+    hideRLBanner();
+  }
+
+  if (d.status === 'running') {
+    if (!timerInt) { timerStart = d.run_start || (Date.now()/1000); timerInt = setInterval(updateTimer, 1000); }
+  } else {
+    clearInterval(timerInt); timerInt = null;
+    if (d.run_start) updateTimerFixed(Date.now()/1000 - d.run_start);
+  }
+
+  const s = d.stats || {};
+  setCard('A', s.artists_processed ?? 0, `${s.artists_processed ?? 0} / ${d.total_artists ?? 0}`);
+  setCard('T', s.tracks_added ?? 0, 'ce cycle');
+  setCard('C', s.api_total_calls ?? 0, `albums: ${s.api_detail?.albums ?? 0} · tracks: ${s.api_detail?.tracks ?? 0}`);
+  const errs = (s.api_429 ?? 0) + (s.api_5xx ?? 0);
+  setCard('E', errs, `429: ${s.api_429 ?? 0} · 5xx: ${s.api_5xx ?? 0}`);
+  document.getElementById('cardE').querySelector('.stat-value').className = 'stat-value' + (errs > 0 ? ' red' : '');
+
+  const total = d.total_artists || 1, done = d.current_idx || 0;
+  const pct   = Math.round((done / total) * 100);
+  const bar   = document.getElementById('progressBar');
+  bar.style.width = pct + '%';
+  bar.className   = 'progress-bar-fill' + (d.status === 'rate_limited' ? ' amber' : '');
+  document.getElementById('progressPct').textContent = pct + '%';
+  document.getElementById('currentArtistLabel').textContent =
+    d.current_artist ? d.current_artist :
+    d.status === 'idle' ? 'En attente du prochain cycle' : 'En attente';
+
+  updateSparkline(d.call_history || []);
+  renderArtistList(d);
+  renderLogs(d.log_tail);
+  updateDaemonBar(d);
+  if (s.current_interval) updateCurrentInterval(s.current_interval);
+}
+
+function updateDaemonBar(d) {
+  const meta = d.daemon_meta || {};
+  const set  = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
+
+  const cycleNum = meta.cycle_num || '—';
+  set('diCycleNum', cycleNum);
+  set('diFollowed', meta.followed_count != null ? fmt(meta.followed_count) : '—');
+
+  if (meta.next_followed_refresh) {
+    const secsUntil = meta.next_followed_refresh - Date.now() / 1000;
+    set('diNextFollowedRefresh', secsUntil > 0 ? hhmm(secsUntil) : 'imminent');
+  } else {
+    set('diNextFollowedRefresh', '—');
+  }
+
+  if (d.status === 'idle' && meta.next_cycle_at) {
+    const secsUntil = meta.next_cycle_at - Date.now() / 1000;
+    set('diNextCycle', secsUntil > 0 ? hhmm(secsUntil) : 'imminent');
+  } else if (d.status === 'running') {
+    set('diNextCycle', 'en cours');
+  } else {
+    set('diNextCycle', '—');
+  }
+}
+
+function setCard(id, val, sub) {
+  const v = document.getElementById('stat' + id), s = document.getElementById('sub' + id);
+  if(v) v.textContent = fmt(val);
+  if(s) s.textContent = sub;
+  const card = document.getElementById('card' + id);
+  if(card && val > 0) card.classList.add('lit');
+}
+
+function updateTimer() { if(!timerStart) return; updateTimerFixed(Date.now()/1000 - timerStart); }
+function updateTimerFixed(secs) {
+  const m = String(Math.floor(secs/60)).padStart(2,'0'), s = String(Math.floor(secs%60)).padStart(2,'0');
+  document.getElementById('timerDisplay').textContent = `${m}:${s}`;
+}
+
+function updateSparkline(history) {
+  const now=Date.now()/1000, win=60, n=40, bs=win/n;
+  const counts = new Array(n).fill(0);
+  history.forEach(ts => { const age=now-ts; if(age>=0&&age<win){ const i=Math.floor((win-age)/bs); if(i>=0&&i<n) counts[i]++; }});
+  const max = Math.max(...counts, 1), el = document.getElementById('sparkline');
+  el.innerHTML = '';
+  counts.forEach((v, i) => { const b=document.createElement('div'); b.className=`spark-bar ${i>=n-5?'hot':''}`; b.style.height=Math.max(4,Math.round((v/max)*100))+'%'; el.appendChild(b); });
+  document.getElementById('sparkInfo').textContent = `${history.filter(ts=>now-ts<win).length} appels`;
+}
+
+function renderArtistList(d) {
+  if(d.status==='idle' && !d.current_artist) return;
+  const list = document.getElementById('artistList');
+  const artists = d.artists_run || [];
+  if(!artists.length) { list.innerHTML='<div class="empty"><div class="empty-icon">♪</div>Aucun artiste</div>'; document.getElementById('artistCount').textContent=0; return; }
+  artists.forEach((a, i) => {
+    let item = document.getElementById(`ai-${i}`);
+    if(!item){ item=document.createElement('div'); item.id=`ai-${i}`; item.className='artist-item'; list.appendChild(item); }
+    item.className = `artist-item ${a.status||''}`;
+    item.onclick = () => openArtistModal(a.id, a.name);
+    item.innerHTML = `<div class="artist-dot ${a.status||''}"></div><div class="artist-name">${esc(a.name)}</div><div class="artist-extra ${a.tracks>0?'new':''}">${a.tracks>0?'+'+a.tracks:''}</div>`;
+  });
+  let item; while((item = document.getElementById(`ai-${artists.length}`))) item.remove();
+  document.getElementById('artistCount').textContent = artists.length;
+}
+
+function renderLogs(lines) {
+  if(!lines||!lines.length) return;
+  const newL = lines.filter(l => l.ts > lastLogTs);
+  if(!newL.length) return;
+  const panel = document.getElementById('logPanel');
+  const empty = panel.querySelector('.empty'); if(empty) empty.remove();
+  newL.forEach(l => {
+    lastLogTs = Math.max(lastLogTs, l.ts);
+    const div = document.createElement('div'); div.className = 'log-line';
+    div.innerHTML = `<span class="log-ts">${hms(l.ts)}</span><span class="log-lvl ${l.level}">${l.level}</span><span class="log-msg">${esc(l.message)}</span>`;
+    panel.appendChild(div);
+  });
+  while(panel.children.length > 400) panel.removeChild(panel.firstChild);
+  panel.scrollTop = panel.scrollHeight;
+}
+function clearLogs() { lastLogTs = Date.now()/1000; document.getElementById('logPanel').innerHTML='<div class="empty"><div class="empty-icon">▣</div>Logs vidés</div>'; }
+
+function applyConfig(cfg) {
+  if(!cfg) return;
+  const set = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
+  set('cfgMarket', cfg.market || '—');
+  set('cfgGroups', cfg.include_groups ? cfg.include_groups.split(',').join(', ') : '—');
+  set('cfgRate', cfg.rate_limit_max_calls ? `${cfg.rate_limit_max_calls}/${cfg.rate_limit_window}s` : '—');
+  set('cfgRetry', cfg.retry_max ?? '—');
+  set('cfgResync', cfg.full_resync ? 'TRUE' : 'FALSE');
+  const el = document.getElementById('cfgResync'); if(el) el.className = `config-val ${cfg.full_resync?'amber':'red'}`;
+  set('cfgDelay', cfg.delay_between_artists ? `${cfg.delay_between_artists}s` : '—');
+  set('cfgMax', cfg.max_artists_per_run || '∞');
+  if(cfg.followed_refresh_interval) set('cfgFollowedRefresh', hhmm(cfg.followed_refresh_interval));
+  if(cfg.cycle_min_interval) set('cfgCycleInterval', hhmm(cfg.cycle_min_interval));
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  DB PANELS
+// ══════════════════════════════════════════════════════════════════
+function renderDbStats(d) {
+  const rows = [
+    {key:'artists', val:d.artists??0, color:'var(--accent)'},
+    {key:'albums',  val:d.albums??0,  color:'var(--blue)'},
+    {key:'playlist_tracks', val:d.playlist_tracks??0, color:'var(--amber)'},
+    {key:'excluded_artists', val:d.excluded_artists??0, color:'var(--red)'},
+  ];
+  document.getElementById('dbPanel').innerHTML = rows.map(r =>
+    `<div class="db-stat-row"><span class="db-stat-key">${r.key}</span><span class="db-stat-val" style="color:${r.color}">${fmt(r.val)}</span></div>`
+  ).join('') + `<div style="margin-top:10px;font-size:10px;color:var(--text3);">Chemin : <span style="color:var(--text2)">${d.db_path||'state.db'}</span></div>`;
+  document.getElementById('dbUpdated').textContent = new Date().toLocaleTimeString('fr-FR');
+
+  document.getElementById('dbPageBody').innerHTML = rows.map(r =>
+    `<div class="db-stat-row" style="padding:10px 20px"><span class="db-stat-key">${r.key}</span><span class="db-stat-val" style="color:${r.color};font-size:28px">${fmt(r.val)}</span></div>`
+  ).join('') + `<div style="padding:10px 20px;font-size:11px;color:var(--text3);">Chemin DB : <span style="color:var(--text2)">${d.db_path||'state.db'}</span></div>`;
+  document.getElementById('dbUpdatedFull').textContent = new Date().toLocaleTimeString('fr-FR');
+}
+
+let _albumsAll = [];
+function renderAlbumsInline(rows) {
+  _albumsAll = rows;
+  filterAlbumsInline();
+  document.getElementById('albumCountFull').textContent = `${fmt(rows.length)} entrées`;
+}
+function filterAlbumsInline() {
+  const q = (document.getElementById('albumSearchInline').value||'').toLowerCase();
+  const rows = q ? _albumsAll.filter(r=>(r.artist_name+r.album_name).toLowerCase().includes(q)) : _albumsAll.slice(0,50);
+  const panel = document.getElementById('albumPanelInline');
+  if(!rows.length){panel.innerHTML='<div class="empty"><div class="empty-icon">◈</div>Aucun résultat</div>';return;}
+  panel.innerHTML = `<table><thead><tr><th>Artiste</th><th>Album</th><th>Tracks</th><th>Vérifié</th></tr></thead><tbody>${rows.slice(0,100).map(r=>`<tr onclick="openArtistModalById('${esc(r.artist_id)}','${esc(r.artist_name)}')" style="cursor:pointer"><td style="color:var(--text)">${esc(r.artist_name)}</td><td>${esc(r.album_name)}</td><td style="color:var(--accent)">${r.total_tracks}</td><td style="color:var(--text3)">${date(r.last_checked)}</td></tr>`).join('')}</tbody></table>`;
+}
+function renderPlaylistsInline(rows) {
+  document.getElementById('playlistCountBadge').textContent = `${rows.length}`;
+  const panel = document.getElementById('playlistPanelInline');
+  if(!rows.length){panel.innerHTML='<div class="empty"><div class="empty-icon">◉</div>Aucune playlist</div>';return;}
+  panel.innerHTML = rows.map(r=>`<div class="playlist-row"><div class="playlist-icon">♫</div><div style="flex:1;min-width:0"><div class="playlist-name">${esc(r.artist_name)} — Discography</div><div class="playlist-id">${r.playlist_id}</div></div><div class="playlist-count"><div class="n">${fmt(r.track_count)}</div><div class="l">tracks</div></div></div>`).join('');
+}
+function renderExcludedInline(rows) {
+  const cloud = document.getElementById('excludedCloud');
+  document.getElementById('excludedCountBadge').textContent = rows.length;
+  if(!rows.length){cloud.innerHTML='<span style="font-size:10px;color:var(--text3);">Aucun</span>';return;}
+  cloud.innerHTML = rows.map(r=>`<span class="tag">${esc(r.artist_name)}</span>`).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  PAGES COMPLÈTES
+// ══════════════════════════════════════════════════════════════════
+function renderAlbumsPage() {
+  const q = (document.getElementById('albumSearch').value||'').toLowerCase();
+  let rows = q ? _albums.filter(r=>(r.artist_name+r.album_name).toLowerCase().includes(q)) : _albums;
+  const s = _sort.albums;
+  if(s.col) rows=[...rows].sort((a,b)=>{ const va=a[s.col]??'',vb=b[s.col]??''; return (va<vb?-1:va>vb?1:0)*s.dir; });
+  document.getElementById('albumCountFull').textContent = `${fmt(rows.length)} entrées`;
+  const cols=[{key:'artist_name',label:'Artiste'},{key:'album_name',label:'Album'},{key:'total_tracks',label:'Tracks'},{key:'last_checked',label:'Vérifié'}];
+  document.getElementById('albumPageBody').innerHTML = `<table><thead><tr>${cols.map(c=>`<th onclick="sortTable('albums','${c.key}')" class="${s.col===c.key?'sorted':''}">${c.label}<span class="sort-arrow">${s.col===c.key?(s.dir>0?'↑':'↓'):'↕'}</span></th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr onclick="openArtistModalById('${esc(r.artist_id)}','${esc(r.artist_name)}')" style="cursor:pointer"><td style="color:var(--text)">${esc(r.artist_name)}</td><td>${esc(r.album_name)}</td><td style="color:var(--accent)">${r.total_tracks}</td><td style="color:var(--text3)">${date(r.last_checked)}</td></tr>`).join('')}</tbody></table>`;
+}
+function renderPlaylistsPage() {
+  const q = (document.getElementById('playlistSearch').value||'').toLowerCase();
+  let rows = q ? _playlists.filter(r=>r.artist_name.toLowerCase().includes(q)) : _playlists;
+  const s = _sort.playlists;
+  if(s.col) rows=[...rows].sort((a,b)=>{ const va=a[s.col]??'',vb=b[s.col]??''; return (va<vb?-1:va>vb?1:0)*s.dir; });
+  document.getElementById('playlistCountFull').textContent = `${rows.length} playlists`;
+  document.getElementById('playlistPageBody').innerHTML = `<table><thead><tr><th onclick="sortTable('playlists','artist_name')" class="${s.col==='artist_name'?'sorted':''}">Artiste<span class="sort-arrow">${s.col==='artist_name'?(s.dir>0?'↑':'↓'):'↕'}</span></th><th>Playlist ID</th><th onclick="sortTable('playlists','track_count')" class="${s.col==='track_count'?'sorted':''}">Tracks<span class="sort-arrow">${s.col==='track_count'?(s.dir>0?'↑':'↓'):'↕'}</span></th></tr></thead><tbody>${rows.map(r=>`<tr><td style="color:var(--text)">${esc(r.artist_name)}</td><td style="color:var(--text3);font-size:10px">${r.playlist_id}</td><td style="color:var(--accent)">${fmt(r.track_count)}</td></tr>`).join('')}</tbody></table>`;
+}
+function renderRemovedPage() {
+  const q = (document.getElementById('removedSearch').value||'').toLowerCase();
+  const rows = q ? _removed.filter(r=>(r.artist_name+r.track_id).toLowerCase().includes(q)) : _removed;
+  document.getElementById('removedCount').textContent = `${_removed.length} détectées`;
+  const body = document.getElementById('removedPageBody');
+  if(!rows.length){body.innerHTML='<div class="empty"><div class="empty-icon">✓</div>Aucune track retirée</div>';return;}
+  body.innerHTML = `<table><thead><tr><th>Track ID</th><th>Artiste</th><th>Détectée</th><th>Statut</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td style="font-size:10px;color:var(--text3)">${esc(r.track_id)}</td><td style="color:var(--text)">${esc(r.artist_name)}</td><td style="color:var(--text3)">${date(r.detected_at)}</td><td style="${r.blacklisted?'color:var(--red)':'color:var(--accent)'}">${r.blacklisted?'Blacklistée':'Active'}</td><td><button class="btn-blacklist" ${r.blacklisted?'disabled':''} onclick="blacklistTrack('${esc(r.artist_id)}','${esc(r.track_id)}',this)">Blacklister</button></td></tr>`).join('')}</tbody></table>`;
+}
+function renderUnavailPage() {
+  const q = (document.getElementById('unavailSearch').value||'').toLowerCase();
+  const rows = q ? _unavail.filter(r=>(r.artist_name+r.track_id).toLowerCase().includes(q)) : _unavail;
+  document.getElementById('unavailCount').textContent = `${_unavail.length} détectées`;
+  const body = document.getElementById('unavailPageBody');
+  if(!rows.length){body.innerHTML='<div class="empty"><div class="empty-icon">✓</div>Aucune track indisponible</div>';return;}
+  body.innerHTML = `<table><thead><tr><th>Track ID</th><th>Artiste</th><th>Détectée</th></tr></thead><tbody>${rows.map(r=>`<tr><td style="font-size:10px;color:var(--text3)">${esc(r.track_id)}</td><td style="color:var(--text)">${esc(r.artist_name)}</td><td style="color:var(--text3)">${date(r.detected_at)}</td></tr>`).join('')}</tbody></table>`;
+}
+function renderExcludedPage() {
+  const q = (document.getElementById('excludedSearch').value||'').toLowerCase();
+  const rows = q ? _excluded.filter(r=>r.artist_name.toLowerCase().includes(q)) : _excluded;
+  document.getElementById('excludedCountFull').textContent = `${_excluded.length} artistes`;
+  const body = document.getElementById('excludedPageBody');
+  if(!rows.length){body.innerHTML='<div class="empty"><div class="empty-icon">—</div>Aucun</div>';return;}
+  body.innerHTML = `<table><thead><tr><th>Artiste</th><th>Première détection</th></tr></thead><tbody>${rows.map(r=>`<tr><td style="color:var(--text)">${esc(r.artist_name)}</td><td style="color:var(--text3)">${date(r.first_seen)}</td></tr>`).join('')}</tbody></table>`;
+}
+
+async function blacklistTrack(artistId, trackId, btn) {
+  btn.disabled = true;
+  try {
+    await fetch('/api/blacklist-track', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({artist_id:artistId,track_id:trackId})});
+    await loadRemoved();
+    renderRemovedPage();
+  } catch(e) { btn.disabled = false; }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  RATE LIMITS PAGE
+// ══════════════════════════════════════════════════════════════════
+let _rlIntervals = [];
+
+async function loadRateLimits() {
+  try {
+    const [intervals, stats] = await Promise.all([
+      apiFetch('/api/db/rate-limit-intervals?limit=200'),
+      apiFetch('/api/db/rate-limit-stats'),
+    ]);
+    _rlIntervals = intervals;
+    renderRLStats(stats);
+    renderRLPage();
+    document.getElementById('rlIntervalCount').textContent = `${intervals.length} intervalle${intervals.length !== 1 ? 's' : ''}`;
+  } catch(e) { console.error('loadRateLimits', e); }
+}
+
+function renderRLStats(s) {
+  const bar = document.getElementById('rlStatsBar');
+  if (!s || !s.total_intervals) {
+    bar.innerHTML = '<span style="color:var(--text3);font-size:11px">Aucun 429 enregistré</span>';
+    return;
+  }
+  bar.innerHTML = [
+    `<span style="color:var(--text3)">Total 429 : <strong style="color:var(--amber)">${s.total_intervals}</strong></span>`,
+    `<span style="color:var(--text3)">Moy. réussis/intervalle : <strong style="color:var(--accent)">${s.avg_ok_calls}</strong></span>`,
+    `<span style="color:var(--text3)">Moy. échoués/intervalle : <strong style="color:var(--red)">${s.avg_fail_calls}</strong></span>`,
+    `<span style="color:var(--text3)">Moy. total/intervalle : <strong style="color:var(--text)">${s.avg_total_calls}</strong></span>`,
+    `<span style="color:var(--text3)">Moy. Retry-After : <strong style="color:var(--purple)">${s.avg_retry_after}s</strong></span>`,
+    `<span style="color:var(--text3)">Max Retry-After : <strong style="color:var(--red)">${s.max_retry_after}s</strong></span>`,
+  ].join('<span style="color:var(--border2);margin:0 4px">|</span>');
+}
+
+function renderRLPage() {
+  const body = document.getElementById('rlPageBody');
+  if (!_rlIntervals.length) {
+    body.innerHTML = '<div class="empty"><div class="empty-icon">◉</div>Aucun rate limit enregistré</div>';
+    return;
+  }
+  const dateTime = ts => {
+    if (!ts) return '—';
+    const d = new Date(ts * 1000);
+    return `${d.toLocaleDateString('fr-FR')} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+  body.innerHTML = `<table>
+    <thead><tr>
+      <th>Date / heure</th>
+      <th>Endpoint</th>
+      <th style="text-align:right">✓ Réussis</th>
+      <th style="text-align:right">✗ Échoués</th>
+      <th style="text-align:right">Total</th>
+      <th style="text-align:right">Retry-After</th>
+      <th style="text-align:right">Durée intervalle</th>
+    </tr></thead>
+    <tbody>${_rlIntervals.map(r => {
+      const dur = (r.end_ts && r.start_ts) ? Math.round(r.end_ts - r.start_ts) : null;
+      const okPct = r.total_calls > 0 ? Math.round(r.ok_calls / r.total_calls * 100) : 0;
+      return `<tr>
+        <td style="color:var(--text3);white-space:nowrap;font-size:10px">${dateTime(r.end_ts)}</td>
+        <td style="font-size:10px;color:var(--blue)">${esc(r.endpoint || '—')}</td>
+        <td style="color:var(--accent);text-align:right">${fmt(r.ok_calls)}</td>
+        <td style="color:var(--red);text-align:right">${fmt(r.fail_calls)}</td>
+        <td style="text-align:right">
+          <strong style="color:var(--text)">${fmt(r.total_calls)}</strong>
+          <span style="font-size:10px;color:var(--text3);margin-left:4px">(${okPct}% ok)</span>
+        </td>
+        <td style="color:var(--amber);text-align:right">${r.retry_after}s</td>
+        <td style="color:var(--text3);text-align:right">${dur !== null ? dur + 's' : '—'}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+function updateCurrentInterval(ci) {
+  if (!ci) return;
+  const bar = document.getElementById('rlCurrentBar');
+  if (!bar) return;
+  bar.style.display = 'flex';
+  const ok    = ci.ok_calls    || 0;
+  const fail  = ci.fail_calls  || 0;
+  const total = ci.total_calls || (ok + fail);
+  document.getElementById('rlCurOk').textContent    = fmt(ok);
+  document.getElementById('rlCurFail').textContent  = fmt(fail);
+  document.getElementById('rlCurTotal').textContent = fmt(total);
+  if (ci.start_ts) document.getElementById('rlCurSince').textContent = hms(ci.start_ts);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  SORT & EXPORT
+// ══════════════════════════════════════════════════════════════════
+function sortTable(table, col) {
+  const s = _sort[table];
+  if(s.col === col) s.dir *= -1; else { s.col = col; s.dir = 1; }
+  if(table === 'albums') renderAlbumsPage();
+  if(table === 'playlists') renderPlaylistsPage();
+}
+function exportCsv(type) {
+  let rows, headers, filename;
+  if(type === 'albums') { headers=['artist_name','album_name','total_tracks','last_checked']; rows=_albums.map(r=>[r.artist_name,r.album_name,r.total_tracks,date(r.last_checked)]); filename='albums.csv'; }
+  else { headers=['artist_name','playlist_id','track_count']; rows=_playlists.map(r=>[r.artist_name,r.playlist_id,r.track_count]); filename='playlists.csv'; }
+  const csv=[headers,...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a'); a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv); a.download=filename; a.click();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  ARTIST MODAL
+// ══════════════════════════════════════════════════════════════════
+async function openArtistModal(artistId, artistName) {
+  document.getElementById('modalArtistName').textContent = artistName || artistId;
+  document.getElementById('modalBody').innerHTML = '<div class="empty"><div class="empty-icon">♪</div>Chargement…</div>';
+  document.getElementById('artistModal').classList.add('open');
+  try {
+    const data = await apiFetch(`/api/db/artist-detail?id=${encodeURIComponent(artistId)}`);
+    renderArtistDetail(data);
+  } catch(e) {
+    document.getElementById('modalBody').innerHTML = `<div class="empty"><div class="empty-icon">✗</div>Erreur : ${esc(e.message)}</div>`;
+  }
+}
+function openArtistModalById(id, name) { openArtistModal(id, name); }
+function closeArtistModal(e) { if(e.target.id === 'artistModal') closeArtistModalBtn(); }
+function closeArtistModalBtn() { document.getElementById('artistModal').classList.remove('open'); }
+function renderArtistDetail(d) {
+  if(!d || d.error) { document.getElementById('modalBody').innerHTML=`<div class="empty"><div class="empty-icon">✗</div>${esc(d?.error||'Données introuvables')}</div>`; return; }
+  document.getElementById('modalBody').innerHTML = `
+    <div class="modal-stat-row">
+      <div class="modal-stat"><div class="modal-stat-label">Albums en cache</div><div class="modal-stat-val">${fmt(d.albums?.length??0)}</div></div>
+      <div class="modal-stat"><div class="modal-stat-label">Tracks en playlist</div><div class="modal-stat-val">${fmt(d.track_count??0)}</div></div>
+      <div class="modal-stat"><div class="modal-stat-label">Dernier scan</div><div class="modal-stat-val" style="font-size:14px">${d.last_scan?date(d.last_scan):'Jamais'}</div></div>
+    </div>
+    ${d.playlist_id?`<div style="font-size:11px;color:var(--text3)">Playlist : <span style="color:var(--text2)">${esc(d.playlist_id)}</span></div>`:''}
+    <div>
+      <div class="section-label" style="margin-bottom:8px">Albums</div>
+      ${d.albums?.length?`<table><thead><tr><th>Album</th><th>Tracks</th><th>Vérifié</th></tr></thead><tbody>${d.albums.map(a=>`<tr><td style="color:var(--text)">${esc(a.album_name)}</td><td style="color:var(--accent)">${a.total_tracks}</td><td style="color:var(--text3)">${date(a.last_checked)}</td></tr>`).join('')}</tbody></table>`:'<div style="font-size:11px;color:var(--text3)">Aucun album scanné</div>'}
+    </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  DATA LOADERS
+// ══════════════════════════════════════════════════════════════════
+async function loadRemoved() { try { _removed = await apiFetch('/api/db/removed-tracks'); } catch { _removed = []; } }
+async function loadUnavail() { try { _unavail = await apiFetch('/api/db/unavailable-tracks'); } catch { _unavail = []; } }
+
+async function pollRun() {
+  try {
+    const d = await apiFetch('/api/run');
+    setConnected(true);
+    applyRunData(d);
+    if(d.config) applyConfig(d.config);
+  } catch(e) { setConnected(false); }
+}
+
+async function pollDb() {
+  try {
+    const [stats, albums, playlists, excluded] = await Promise.all([
+      apiFetch('/api/db/stats'),
+      apiFetch('/api/db/albums?limit=1000'),
+      apiFetch('/api/db/playlists'),
+      apiFetch('/api/db/excluded'),
+    ]);
+    _albums = albums; _playlists = playlists; _excluded = excluded;
+    renderDbStats(stats);
+    renderAlbumsInline(albums);
+    renderPlaylistsInline(playlists);
+    renderExcludedInline(excluded);
+    if(currentPage === 'albums')    renderAlbumsPage();
+    if(currentPage === 'playlists') renderPlaylistsPage();
+    if(currentPage === 'excluded')  renderExcludedPage();
+  } catch {}
+  await loadRemoved();
+  await loadUnavail();
+  if(currentPage === 'removed')     renderRemovedPage();
+  if(currentPage === 'unavailable') renderUnavailPage();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════════
+(async function init() {
+  const el = document.getElementById('sparkline');
+  for(let i=0; i<40; i++) { const b=document.createElement('div'); b.className='spark-bar'; b.style.height='4%'; el.appendChild(b); }
+  await pollRun().catch(()=>{});
+  await pollDb().catch(()=>{});
+  await loadRateLimits().catch(()=>{});
+  setInterval(pollRun,       POLL_RUN);
+  setInterval(pollDb,        POLL_DB);
+  setInterval(loadRateLimits, 15000);
+})();
+</script>
+</body>
+</html>

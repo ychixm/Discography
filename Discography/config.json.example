@@ -1,0 +1,35 @@
+{
+  "client_id":     "VOTRE_CLIENT_ID_32_CHARS_HEX",
+  "client_secret": "VOTRE_CLIENT_SECRET_32_CHARS_HEX",
+  "redirect_uri":  "http://127.0.0.1:4381/login",
+
+  "request_timeout_seconds": 10,
+
+  "rate_limit_window_seconds":    30,
+  "rate_limit_max_calls":          2,
+  "min_request_interval_seconds": 14,
+  "max_request_interval_seconds": 16,
+
+  "retry_max_attempts":       5,
+  "retry_base_delay_seconds": 1,
+
+  "delay_between_artists_seconds": 1.0,
+  "include_groups": "album,single,compilation,appears_on",
+
+  "verbose_logging":     false,
+  "full_resync_mode":    false,
+  "max_artists_per_run": 0,
+
+  "scan_interval_seconds": 604800,
+
+  "followed_refresh_interval_days": 1,
+
+  "cycle_min_interval_seconds": 300,
+
+  "dashboard_port": 8080,
+
+  "_note_stockage": "Les chemins ci-dessous sont OPTIONNELS. Par défaut l'appli écrit dans AppData\\Roaming (Windows) ou ~/.local/share/SpotifyDiscography (Linux/macOS). Décommentez et adaptez si vous souhaitez un emplacement personnalisé.",
+  "_state_db_path":  "C:\\Users\\Bob\\AppData\\Roaming\\SpotifyDiscography\\state.db",
+  "_log_file_path":  "C:\\Users\\Bob\\AppData\\Roaming\\SpotifyDiscography\\spotify_discography.log",
+  "_tokens_path":    "C:\\Users\\Bob\\AppData\\Roaming\\SpotifyDiscography\\tokens.json"
+}
