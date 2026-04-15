@@ -24,10 +24,7 @@ APP_DATA_DIR: str = _app_data_dir()
 #   1. Variable d'environnement SPOTIFY_CONFIG_PATH (override explicite)
 #   2. APP_DATA_DIR/config.json  (emplacement standard, même dossier que la DB)
 # L'ancien emplacement (dossier du script) n'est plus utilisé.
-_CONFIG_PATH: str = os.environ.get(
-    "SPOTIFY_CONFIG_PATH",
-    os.path.join(APP_DATA_DIR, "config.json"),
-)
+config_path = os.environ.get("SPOTIFY_CONFIG_PATH", config._CONFIG_PATH)
 
 # Chargement défensif : si config.json est absent (premier démarrage, flow setup),
 # on initialise _RAW à un dict vide. Les valeurs dépendantes du fichier resteront

@@ -103,7 +103,7 @@ def _daemon_worker(port: int):
     global _tray
 
     # ── Validation config ──────────────────────────────────────────────────
-    config_path = os.environ.get("SPOTIFY_CONFIG_PATH", "config.json")
+    config_path = os.environ.get("SPOTIFY_CONFIG_PATH", config._CONFIG_PATH)
     try:
         validate_config(config_path)
     except ConfigurationError as e:
