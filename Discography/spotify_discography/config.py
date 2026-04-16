@@ -91,13 +91,13 @@ MAX_ARTISTS_PER_RUN: int = _RAW.get("max_artists_per_run", 0)
 MARKET: str              = _RAW.get("market", "FR")
 
 # ── Mode daemon ───────────────────────────────────────────────────────────────
+# SCAN_INTERVAL : durée minimale entre deux scans d'un même artiste.
+# Un album dont last_checked est plus récent que SCAN_INTERVAL est ignoré
+# (économie d'appels API) sauf si FULL_RESYNC_MODE est activé.
 SCAN_INTERVAL: int = _RAW.get("scan_interval_seconds", 7 * 24 * 3600)
 
-_followed_days: float = float(_RAW.get("followed_refresh_interval_days", 1))
-if _followed_days <= 0:
-    raise ValueError("followed_refresh_interval_days doit être > 0")
-FOLLOWED_REFRESH_INTERVAL: int = int(_followed_days * 86400)
-
+# CYCLE_MIN_INTERVAL : attente minimale entre deux cycles complets.
+# Évite un spin tight quand tous les artistes sont récents.
 CYCLE_MIN_INTERVAL: int = _RAW.get("cycle_min_interval_seconds", 300)
 
 # Dashboard

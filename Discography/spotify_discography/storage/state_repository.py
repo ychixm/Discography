@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import time
 from typing import Optional
@@ -38,14 +39,17 @@ class SQLiteStateRepository(StateRepository):
                 PRIMARY KEY (artist_id, track_id)
             );
 
-            -- [1] Reprise sur interruption et 429
-            CREATE TABLE IF NOT EXISTS run_checkpoint (
-                id              INTEGER PRIMARY KEY CHECK (id = 1),
-                last_artist_idx INTEGER NOT NULL DEFAULT 0,
-                run_started_at  REAL    NOT NULL DEFAULT 0
+            -- Reprise sur interruption (niveau album)
+            -- album_ids      : JSON array des album_id dans l'ordre du scan
+            -- last_album_idx : index du dernier album complètement traité
+            --                  -1 = aucun album terminé, reprendre à 0
+            CREATE TABLE IF NOT EXISTS album_checkpoint (
+                artist_id      TEXT PRIMARY KEY,
+                album_ids      TEXT    NOT NULL,
+                last_album_idx INTEGER NOT NULL DEFAULT -1
             );
 
-            -- [2-A] Tracks indisponibles
+            -- Tracks indisponibles sur le marché de l'utilisateur
             CREATE TABLE IF NOT EXISTS unavailable_tracks (
                 track_id    TEXT NOT NULL,
                 artist_id   TEXT NOT NULL REFERENCES artists(artist_id),
@@ -53,7 +57,7 @@ class SQLiteStateRepository(StateRepository):
                 PRIMARY KEY (track_id, artist_id)
             );
 
-            -- [2-B] Tracks retirées manuellement
+            -- Tracks retirées manuellement de la playlist
             CREATE TABLE IF NOT EXISTS removed_tracks (
                 track_id      TEXT NOT NULL,
                 artist_id     TEXT NOT NULL REFERENCES artists(artist_id),
@@ -62,34 +66,31 @@ class SQLiteStateRepository(StateRepository):
                 PRIMARY KEY (track_id, artist_id)
             );
 
-            -- [DAEMON] État persistant du cycle daemon
-            -- Mémorise la dernière fois que la liste des artistes suivis a été rechargée
-            -- et le timestamp de début du cycle courant.
+            -- État persistant du daemon
+            -- last_followed_refresh : timestamp du dernier rechargement
+            --   des artistes suivis (mis à jour uniquement quand tous les
+            --   artistes ont été traités, i.e. aucun last_scan == 0)
+            -- cycle_started_at / cycle_artist_idx : position dans le cycle
             CREATE TABLE IF NOT EXISTS daemon_state (
-                id                      INTEGER PRIMARY KEY CHECK (id = 1),
-                last_followed_refresh   REAL NOT NULL DEFAULT 0,
-                cycle_started_at        REAL NOT NULL DEFAULT 0,
-                cycle_artist_idx        INTEGER NOT NULL DEFAULT 0
+                id                    INTEGER PRIMARY KEY CHECK (id = 1),
+                last_followed_refresh REAL    NOT NULL DEFAULT 0,
+                cycle_started_at      REAL    NOT NULL DEFAULT 0,
+                cycle_artist_idx      INTEGER NOT NULL DEFAULT 0
             );
 
-            -- [429] Historique des intervalles entre rate limits.
-            -- Chaque ligne correspond à un intervalle clos par un 429 Spotify.
-            -- ok_calls   = nombre d'appels ayant abouti dans cet intervalle
-            -- fail_calls = nombre d'appels ayant échoué (429 lui-même + 5xx + réseau)
-            -- total est calculé à l'affichage : ok_calls + fail_calls
+            -- Historique des intervalles entre rate limits Spotify
             CREATE TABLE IF NOT EXISTS rate_limit_intervals (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                start_ts     REAL    NOT NULL,
-                end_ts       REAL    NOT NULL,
-                ok_calls     INTEGER NOT NULL DEFAULT 0,
-                fail_calls   INTEGER NOT NULL DEFAULT 0,
-                retry_after  REAL    NOT NULL DEFAULT 0,
-                endpoint     TEXT    NOT NULL DEFAULT ''
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                start_ts    REAL    NOT NULL,
+                end_ts      REAL    NOT NULL,
+                ok_calls    INTEGER NOT NULL DEFAULT 0,
+                fail_calls  INTEGER NOT NULL DEFAULT 0,
+                retry_after REAL    NOT NULL DEFAULT 0,
+                endpoint    TEXT    NOT NULL DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_rli_end_ts
                 ON rate_limit_intervals(end_ts DESC);
-
             CREATE INDEX IF NOT EXISTS idx_artists_last_scan
                 ON artists(last_scan ASC);
             CREATE INDEX IF NOT EXISTS idx_unavailable_artist
@@ -129,16 +130,86 @@ class SQLiteStateRepository(StateRepository):
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_artists_ordered_by_scan(self) -> list:
+    def get_ordered_artist_ids(self, followed_ids: set) -> list:
         """
-        Retourne tous les artistes triés par last_scan ASC.
-        Utilisé par le daemon pour trouver le prochain artiste à scanner
-        (celui dont le scan est le plus ancien).
+        Retourne la liste ordonnée des artist_id à traiter dans ce cycle :
+
+          1. Artistes avec un album_checkpoint actif (reprise prioritaire)
+             → dans l'ordre de last_scan ASC pour être déterministe
+          2. Artistes suivis jamais traités (last_scan == 0, pas de checkpoint)
+          3. Artistes suivis déjà traités, triés par last_scan ASC
+             (le plus ancien d'abord)
+
+        Seuls les artistes présents dans followed_ids sont inclus,
+        plus les artistes en cours de checkpoint même s'ils ont été
+        désabonnés (pour terminer proprement leur scan en cours).
         """
-        rows = self._conn.execute(
-            "SELECT * FROM artists ORDER BY last_scan ASC"
-        ).fetchall()
-        return [dict(r) for r in rows]
+        # Artistes avec checkpoint actif
+        checkpoint_ids = {
+            r[0] for r in self._conn.execute(
+                "SELECT artist_id FROM album_checkpoint"
+            ).fetchall()
+        }
+
+        # Tous les artistes connus en DB avec leur last_scan
+        known = {
+            r["artist_id"]: r["last_scan"]
+            for r in self._conn.execute(
+                "SELECT artist_id, last_scan FROM artists"
+            ).fetchall()
+        }
+
+        # Groupe 1 : checkpoint actif (qu'ils soient encore suivis ou non)
+        group1 = sorted(
+            checkpoint_ids,
+            key=lambda aid: known.get(aid, 0.0),
+        )
+
+        # Groupe 2 : suivis, jamais traités, sans checkpoint
+        group2 = [
+            aid for aid in followed_ids
+            if aid not in checkpoint_ids
+            and known.get(aid, 0.0) == 0.0
+        ]
+
+        # Groupe 3 : suivis, déjà traités, sans checkpoint, triés par last_scan ASC
+        group3 = sorted(
+            [
+                aid for aid in followed_ids
+                if aid not in checkpoint_ids
+                and known.get(aid, 0.0) > 0.0
+            ],
+            key=lambda aid: known.get(aid, 0.0),
+        )
+
+        return group1 + group2 + group3
+
+    def all_followed_scanned(self, followed_ids: set) -> bool:
+        """
+        Retourne True si tous les artistes suivis ont été traités au moins
+        une fois (last_scan > 0) ET qu'aucun album_checkpoint n'est actif.
+
+        C'est la condition pour déclencher un refresh de la liste des suivis.
+        """
+        if not followed_ids:
+            return False
+
+        # S'il reste des checkpoints actifs, le cycle n'est pas terminé
+        pending = self._conn.execute(
+            "SELECT COUNT(*) FROM album_checkpoint"
+        ).fetchone()[0]
+        if pending > 0:
+            return False
+
+        # S'il reste des artistes suivis avec last_scan == 0
+        placeholders = ",".join("?" * len(followed_ids))
+        unscanned = self._conn.execute(
+            f"SELECT COUNT(*) FROM artists "
+            f"WHERE artist_id IN ({placeholders}) AND last_scan = 0",
+            list(followed_ids),
+        ).fetchone()[0]
+
+        return unscanned == 0
 
     # ── Albums ────────────────────────────────────────────────────────────────
 
@@ -165,6 +236,51 @@ class SQLiteStateRepository(StateRepository):
         })
         self._conn.commit()
 
+    # ── Album checkpoint ──────────────────────────────────────────────────────
+
+    def save_album_checkpoint(
+        self,
+        artist_id: str,
+        album_ids: list,
+        last_album_idx: int,
+    ) -> None:
+        """
+        Crée ou met à jour le checkpoint album pour un artiste.
+        album_ids  : liste ordonnée des album_id telle que récupérée depuis Spotify.
+        last_album_idx : index du dernier album complètement traité (-1 si aucun).
+        """
+        self._conn.execute("""
+            INSERT INTO album_checkpoint (artist_id, album_ids, last_album_idx)
+            VALUES (?, ?, ?)
+            ON CONFLICT(artist_id) DO UPDATE SET
+                album_ids      = excluded.album_ids,
+                last_album_idx = excluded.last_album_idx
+        """, (artist_id, json.dumps(album_ids), last_album_idx))
+        self._conn.commit()
+
+    def load_album_checkpoint(self, artist_id: str) -> Optional[dict]:
+        """
+        Retourne le checkpoint album pour un artiste, ou None s'il n'existe pas.
+        Retourne : { "album_ids": [...], "last_album_idx": int }
+        """
+        row = self._conn.execute(
+            "SELECT album_ids, last_album_idx FROM album_checkpoint WHERE artist_id = ?",
+            (artist_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "album_ids":      json.loads(row["album_ids"]),
+            "last_album_idx": row["last_album_idx"],
+        }
+
+    def clear_album_checkpoint(self, artist_id: str) -> None:
+        """Supprime le checkpoint album une fois l'artiste entièrement traité."""
+        self._conn.execute(
+            "DELETE FROM album_checkpoint WHERE artist_id = ?", (artist_id,)
+        )
+        self._conn.commit()
+
     # ── Playlist tracks ───────────────────────────────────────────────────────
 
     def get_playlist_tracks(self, artist_id: str) -> set:
@@ -180,48 +296,19 @@ class SQLiteStateRepository(StateRepository):
             )
             self._conn.executemany(
                 "INSERT OR IGNORE INTO playlist_tracks VALUES (?, ?)",
-                [(artist_id, tid) for tid in track_ids]
+                [(artist_id, tid) for tid in track_ids],
             )
 
     def add_playlist_tracks(self, artist_id: str, track_ids: set) -> None:
         with self._conn:
             self._conn.executemany(
                 "INSERT OR IGNORE INTO playlist_tracks VALUES (?, ?)",
-                [(artist_id, tid) for tid in track_ids]
+                [(artist_id, tid) for tid in track_ids],
             )
 
-    # ── [1] Run checkpoint ────────────────────────────────────────────────────
-
-    def save_checkpoint(self, last_artist_idx: int, run_started_at: float) -> None:
-        self._conn.execute("""
-            INSERT INTO run_checkpoint (id, last_artist_idx, run_started_at)
-            VALUES (1, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                last_artist_idx = excluded.last_artist_idx,
-                run_started_at  = excluded.run_started_at
-        """, (last_artist_idx, run_started_at))
-        self._conn.commit()
-
-    def load_checkpoint(self) -> Optional[dict]:
-        row = self._conn.execute(
-            "SELECT * FROM run_checkpoint WHERE id = 1"
-        ).fetchone()
-        return dict(row) if row else None
-
-    def clear_checkpoint(self) -> None:
-        self._conn.execute("DELETE FROM run_checkpoint WHERE id = 1")
-        self._conn.commit()
-
-    # ── [DAEMON] État du cycle daemon ─────────────────────────────────────────
+    # ── Daemon state ──────────────────────────────────────────────────────────
 
     def load_daemon_state(self) -> dict:
-        """
-        Charge l'état persistant du daemon.
-        Retourne un dict avec :
-          - last_followed_refresh : timestamp du dernier rechargement des artistes suivis
-          - cycle_started_at      : timestamp de début du cycle courant
-          - cycle_artist_idx      : index de l'artiste en cours dans le cycle
-        """
         row = self._conn.execute(
             "SELECT * FROM daemon_state WHERE id = 1"
         ).fetchone()
@@ -251,13 +338,12 @@ class SQLiteStateRepository(StateRepository):
         self._conn.commit()
 
     def update_daemon_artist_idx(self, cycle_artist_idx: int) -> None:
-        """Met à jour uniquement l'index de l'artiste courant (appel fréquent)."""
         self._conn.execute("""
             UPDATE daemon_state SET cycle_artist_idx = ? WHERE id = 1
         """, (cycle_artist_idx,))
         self._conn.commit()
 
-    # ── [2-A] Tracks indisponibles ────────────────────────────────────────────
+    # ── Unavailable tracks ────────────────────────────────────────────────────
 
     def add_unavailable_tracks(self, artist_id: str, track_ids: set) -> None:
         with self._conn:
@@ -282,7 +368,7 @@ class SQLiteStateRepository(StateRepository):
         """).fetchall()
         return [dict(r) for r in rows]
 
-    # ── [2-B] Tracks retirées ─────────────────────────────────────────────────
+    # ── Removed tracks ────────────────────────────────────────────────────────
 
     def add_removed_tracks(self, artist_id: str, track_ids: set) -> None:
         with self._conn:
@@ -331,7 +417,7 @@ class SQLiteStateRepository(StateRepository):
         """).fetchall()
         return [dict(r) for r in rows]
 
-    # ── [429] Rate limit intervals ─────────────────────────────────────────────
+    # ── Rate limit intervals ──────────────────────────────────────────────────
 
     def save_rate_limit_interval(
         self,
@@ -342,10 +428,6 @@ class SQLiteStateRepository(StateRepository):
         retry_after: float,
         endpoint: str,
     ) -> None:
-        """
-        Persiste un intervalle clos (déclenché par un 429).
-        Calcul du total à l'affichage : ok_calls + fail_calls.
-        """
         self._conn.execute("""
             INSERT INTO rate_limit_intervals
                 (start_ts, end_ts, ok_calls, fail_calls, retry_after, endpoint)
@@ -354,12 +436,6 @@ class SQLiteStateRepository(StateRepository):
         self._conn.commit()
 
     def get_rate_limit_intervals(self, limit: int = 100) -> list:
-        """
-        Retourne les derniers intervalles triés du plus récent au plus ancien.
-        Chaque dict contient :
-          start_ts, end_ts, ok_calls, fail_calls, retry_after, endpoint
-        Le champ total_calls (ok + fail) est ajouté ici pour commodité.
-        """
         rows = self._conn.execute("""
             SELECT id, start_ts, end_ts, ok_calls, fail_calls,
                    retry_after, endpoint
@@ -375,31 +451,22 @@ class SQLiteStateRepository(StateRepository):
         return result
 
     def get_rate_limit_stats(self) -> dict:
-        """
-        Agrégats globaux sur tous les intervalles persistés :
-          - total_intervals   : nombre de 429 enregistrés
-          - avg_ok_calls      : moyenne des appels réussis par intervalle
-          - avg_fail_calls    : moyenne des appels en erreur par intervalle
-          - avg_total_calls   : moyenne du total par intervalle
-          - avg_retry_after   : moyenne des Retry-After (secondes)
-          - max_retry_after   : Retry-After le plus long observé
-        """
         row = self._conn.execute("""
             SELECT
-                COUNT(*)              AS total_intervals,
-                AVG(ok_calls)         AS avg_ok,
-                AVG(fail_calls)       AS avg_fail,
+                COUNT(*)                   AS total_intervals,
+                AVG(ok_calls)              AS avg_ok,
+                AVG(fail_calls)            AS avg_fail,
                 AVG(ok_calls + fail_calls) AS avg_total,
-                AVG(retry_after)      AS avg_retry_after,
-                MAX(retry_after)      AS max_retry_after
+                AVG(retry_after)           AS avg_retry_after,
+                MAX(retry_after)           AS max_retry_after
             FROM rate_limit_intervals
         """).fetchone()
-        if not row:
-            return {}
+        if not row or not row["total_intervals"]:
+            return {"total_intervals": 0}
         return {
             "total_intervals": row["total_intervals"],
-            "avg_ok_calls":    round(row["avg_ok"]   or 0, 1),
-            "avg_fail_calls":  round(row["avg_fail"] or 0, 1),
+            "avg_ok_calls":    round(row["avg_ok"]    or 0, 1),
+            "avg_fail_calls":  round(row["avg_fail"]  or 0, 1),
             "avg_total_calls": round(row["avg_total"] or 0, 1),
             "avg_retry_after": round(row["avg_retry_after"] or 0, 1),
             "max_retry_after": row["max_retry_after"] or 0,
