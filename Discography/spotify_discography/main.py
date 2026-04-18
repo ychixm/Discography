@@ -161,10 +161,26 @@ def _daemon_worker(port: int):
     state_repo    = SQLiteStateRepository(config.STATE_DB_PATH)
     excluded_repo = SQLiteExcludedRepository(config.STATE_DB_PATH)
 
-    # ── Cache mémoire des artistes suivis ──────────────────────────────────
-    # Chargé une première fois au démarrage, puis rafraîchi uniquement quand
-    # tous les artistes ont été traités (all_followed_scanned).
-    followed_map: dict = {}
+    # ── Pré-chargement de followed_map depuis la DB au démarrage ──────────
+    # Évite le refresh Spotify systématique si des artistes sont déjà connus
+    # et que le cycle précédent n'est pas terminé (checkpoints actifs ou
+    # artistes avec last_scan == 0).
+    # La condition de refresh dans la boucle (all_followed_scanned) décidera
+    # proprement si un appel à /me/following est nécessaire.
+    known_artists = state_repo.get_all_artists()
+    if known_artists:
+        followed_map: dict = {
+            a["artist_id"]: {"id": a["artist_id"], "name": a["artist_name"]}
+            for a in known_artists
+        }
+        logger.info(
+            "Démarrage : %d artistes chargés depuis la DB — "
+            "le refresh Spotify n'aura lieu que si tous ont été traités.",
+            len(followed_map),
+        )
+    else:
+        followed_map: dict = {}
+        logger.info("Démarrage : DB vide, refresh Spotify requis au premier cycle.")
 
     # ── Boucle daemon ──────────────────────────────────────────────────────
     cycle_num = 0

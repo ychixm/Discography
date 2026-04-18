@@ -88,7 +88,7 @@ TOKENS_PATH: str = _RAW.get(
 VERBOSE_LOGGING: bool    = _RAW.get("verbose_logging", False)
 FULL_RESYNC_MODE: bool   = _RAW.get("full_resync_mode", False)
 MAX_ARTISTS_PER_RUN: int = _RAW.get("max_artists_per_run", 0)
-MARKET: str              = _RAW.get("market", "FR")
+MARKET: str              = _RAW.get("market", "JP")
 
 # ── Mode daemon ───────────────────────────────────────────────────────────────
 # SCAN_INTERVAL : durée minimale entre deux scans d'un même artiste.
