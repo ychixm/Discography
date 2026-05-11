@@ -704,10 +704,29 @@ function filterAlbumsInline() {
 }
 
 function renderPlaylistsInline(rows) {
-  document.getElementById('playlistCountBadge').textContent=`${rows.length}`;
-  const panel=document.getElementById('playlistPanelInline');
-  if(!rows.length){panel.innerHTML='<div class="empty"><div class="empty-icon">◉</div>Aucune playlist</div>';return;}
-  panel.innerHTML=rows.map(r=>`<div class="playlist-row"><div class="playlist-icon">♫</div><div style="flex:1;min-width:0"><div class="playlist-name">${esc(r.artist_name)} — Discography</div><div class="playlist-id">${r.playlist_id}</div></div><div class="playlist-count"><div class="n">${fmt(r.track_count)}</div><div class="l">tracks</div></div></div>`).join('');
+  // rows : [{ artist_id, artist_name, slot, playlist_id, track_count }, ...]
+  document.getElementById('playlistCountBadge').textContent = rows.length;
+  const panel = document.getElementById('playlistPanelInline');
+  if (!rows.length) {
+    panel.innerHTML = '<div class="empty"><div class="empty-icon">◉</div>Aucune playlist</div>';
+    return;
+  }
+  panel.innerHTML = rows.map(r => {
+    const slotLabel = r.slot > 1
+      ? `<span style="font-size:9px;background:var(--amber);color:#000;border-radius:3px;padding:1px 5px;margin-left:5px">Slot ${r.slot}</span>`
+      : '';
+    return `<div class="playlist-row">
+      <div class="playlist-icon">♫</div>
+      <div style="flex:1;min-width:0">
+        <div class="playlist-name">${esc(r.artist_name)} — Discography${slotLabel}</div>
+        <div class="playlist-id">${r.playlist_id}</div>
+      </div>
+      <div class="playlist-count">
+        <div class="n">${fmt(r.track_count)}</div>
+        <div class="l">tracks</div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function renderExcludedInline(rows) {
@@ -777,12 +796,48 @@ function renderAlbumsPage() {
 }
 
 function renderPlaylistsPage() {
-  const q=(document.getElementById('playlistSearch').value||'').toLowerCase();
-  let rows=q ? _playlists.filter(r=>r.artist_name.toLowerCase().includes(q)) : _playlists;
-  const s=_sort.playlists;
-  if(s.col) rows=[...rows].sort((a,b)=>{ const va=a[s.col]??'',vb=b[s.col]??''; return (va<vb?-1:va>vb?1:0)*s.dir; });
-  document.getElementById('playlistCountFull').textContent=`${rows.length} playlists`;
-  document.getElementById('playlistPageBody').innerHTML=`<table><thead><tr><th onclick="sortTable('playlists','artist_name')" class="${s.col==='artist_name'?'sorted':''}">Artiste<span class="sort-arrow">${s.col==='artist_name'?(s.dir>0?'↑':'↓'):'↕'}</span></th><th>Playlist ID</th><th onclick="sortTable('playlists','track_count')" class="${s.col==='track_count'?'sorted':''}">Tracks<span class="sort-arrow">${s.col==='track_count'?(s.dir>0?'↑':'↓'):'↕'}</span></th></tr></thead><tbody>${rows.map(r=>`<tr><td style="color:var(--text)">${esc(r.artist_name)}</td><td style="color:var(--text3);font-size:10px">${r.playlist_id}</td><td style="color:var(--accent)">${fmt(r.track_count)}</td></tr>`).join('')}</tbody></table>`;
+  const q = (document.getElementById('playlistSearch').value || '').toLowerCase();
+  let rows = q
+    ? _playlists.filter(r => r.artist_name.toLowerCase().includes(q))
+    : _playlists;
+  const s = _sort.playlists;
+  if (s.col) {
+    rows = [...rows].sort((a, b) => {
+      const va = a[s.col] ?? '', vb = b[s.col] ?? '';
+      return (va < vb ? -1 : va > vb ? 1 : 0) * s.dir;
+    });
+  }
+  document.getElementById('playlistCountFull').textContent = `${rows.length} playlists`;
+
+  const body = document.getElementById('playlistPageBody');
+  if (!rows.length) {
+    body.innerHTML = '<div class="empty"><div class="empty-icon">◉</div>Aucune playlist</div>';
+    return;
+  }
+  body.innerHTML = `<table><thead><tr>
+    <th onclick="sortTable('playlists','artist_name')" class="${s.col==='artist_name'?'sorted':''}">
+      Artiste<span class="sort-arrow">${s.col==='artist_name'?(s.dir>0?'↑':'↓'):'↕'}</span>
+    </th>
+    <th onclick="sortTable('playlists','slot')" class="${s.col==='slot'?'sorted':''}">
+      Slot<span class="sort-arrow">${s.col==='slot'?(s.dir>0?'↑':'↓'):'↕'}</span>
+    </th>
+    <th>Playlist ID</th>
+    <th onclick="sortTable('playlists','track_count')" class="${s.col==='track_count'?'sorted':''}">
+      Tracks<span class="sort-arrow">${s.col==='track_count'?(s.dir>0?'↑':'↓'):'↕'}</span>
+    </th>
+  </tr></thead><tbody>
+    ${rows.map(r => {
+      const slotBadge = r.slot > 1
+        ? `<span style="font-size:9px;background:var(--amber);color:#000;border-radius:3px;padding:1px 5px;margin-left:4px">slot ${r.slot}</span>`
+        : '';
+      return `<tr>
+        <td style="color:var(--text)">${esc(r.artist_name)}${slotBadge}</td>
+        <td style="color:var(--text3);text-align:center">${r.slot}</td>
+        <td style="color:var(--text3);font-size:10px">${r.playlist_id}</td>
+        <td style="color:var(--accent)">${fmt(r.track_count)}</td>
+      </tr>`;
+    }).join('')}
+  </tbody></table>`;
 }
 
 function renderRemovedPage() {
@@ -910,7 +965,11 @@ function closeArtistModal(e) { if(e.target.id==='artistModal') closeArtistModalB
 function closeArtistModalBtn() { document.getElementById('artistModal').classList.remove('open'); }
 
 function renderArtistDetail(d) {
-  if(!d||d.error){document.getElementById('modalBody').innerHTML=`<div class="empty"><div class="empty-icon">✗</div>${esc(d?.error||'Données introuvables')}</div>`;return;}
+  if (!d || d.error) {
+    document.getElementById('modalBody').innerHTML =
+      `<div class="empty"><div class="empty-icon">✗</div>${esc(d?.error || 'Données introuvables')}</div>`;
+    return;
+  }
 
   // Bloc checkpoint actif
   let cpBlock = '';
@@ -922,25 +981,70 @@ function renderArtistDetail(d) {
         <div class="modal-cp-title">⟳ Reprise en cours</div>
         <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:11px">
           <span style="color:var(--text2)">${cp.albums_done} albums traités sur ${cp.total_albums}</span>
-          <span style="color:var(--amber)">${cp.albums_remaining} restant${cp.albums_remaining!==1?'s':''}</span>
+          <span style="color:var(--amber)">${cp.albums_remaining} restant${cp.albums_remaining !== 1 ? 's' : ''}</span>
         </div>
         <div class="cp-bar-bg"><div class="cp-bar-fill" style="width:${pct}%"></div></div>
         <div style="font-size:10px;color:var(--text3);margin-top:4px">${pct}% — reprendra automatiquement en priorité</div>
       </div>`;
   }
 
+  // Bloc playlists (multi-slots)
+  const playlists = d.playlists || (
+    d.playlist_id ? [{ slot: 1, playlist_id: d.playlist_id, track_count: d.track_count }] : []
+  );
+  let playlistsBlock = '';
+  if (playlists.length === 0) {
+    playlistsBlock = '<div style="font-size:11px;color:var(--text3)">Aucune playlist créée</div>';
+  } else if (playlists.length === 1) {
+    playlistsBlock = `<div style="font-size:11px;color:var(--text3)">Playlist : <span style="color:var(--text2)">${esc(playlists[0].playlist_id)}</span></div>`;
+  } else {
+    playlistsBlock = `
+      <div>
+        <div class="section-label" style="margin-bottom:6px;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text3)">Playlists (${playlists.length} slots)</div>
+        <table><thead><tr><th>Slot</th><th>Playlist ID</th><th>Tracks</th></tr></thead><tbody>
+          ${playlists.map(p => `
+            <tr>
+              <td style="color:var(--amber);text-align:center">${p.slot}</td>
+              <td style="color:var(--text3);font-size:10px">${esc(p.playlist_id)}</td>
+              <td style="color:var(--accent)">${fmt(p.track_count)}</td>
+            </tr>`).join('')}
+        </tbody></table>
+      </div>`;
+  }
+
   document.getElementById('modalBody').innerHTML = `
     <div class="modal-stat-row">
-      <div class="modal-stat"><div class="modal-stat-label">Albums en cache</div><div class="modal-stat-val">${fmt(d.albums?.length??0)}</div></div>
-      <div class="modal-stat"><div class="modal-stat-label">Tracks en playlist</div><div class="modal-stat-val">${fmt(d.track_count??0)}</div></div>
-      <div class="modal-stat"><div class="modal-stat-label">Dernier scan</div><div class="modal-stat-val" style="font-size:14px">${d.last_scan?date(d.last_scan):'Jamais'}</div></div>
+      <div class="modal-stat">
+        <div class="modal-stat-label">Albums en cache</div>
+        <div class="modal-stat-val">${fmt(d.albums?.length ?? 0)}</div>
+      </div>
+      <div class="modal-stat">
+        <div class="modal-stat-label">Tracks en playlist(s)</div>
+        <div class="modal-stat-val">${fmt(d.track_count ?? 0)}</div>
+      </div>
+      <div class="modal-stat">
+        <div class="modal-stat-label">Slots playlists</div>
+        <div class="modal-stat-val" style="color:var(--amber)">${playlists.length}</div>
+      </div>
+    </div>
+    <div class="modal-stat-row">
+      <div class="modal-stat" style="grid-column:1/-1">
+        <div class="modal-stat-label">Dernier scan</div>
+        <div class="modal-stat-val" style="font-size:14px">${d.last_scan ? date(d.last_scan) : 'Jamais'}</div>
+      </div>
     </div>
     ${cpBlock}
-    ${d.playlist_id?`<div style="font-size:11px;color:var(--text3)">Playlist : <span style="color:var(--text2)">${esc(d.playlist_id)}</span></div>`:''}
+    ${playlistsBlock}
     <div>
       <div class="section-label" style="margin-bottom:8px;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text3)">Albums</div>
       ${d.albums?.length
-        ? `<table><thead><tr><th>Album</th><th>Tracks</th><th>Vérifié</th></tr></thead><tbody>${d.albums.map(a=>`<tr><td style="color:var(--text)">${esc(a.album_name)}</td><td style="color:var(--accent)">${a.total_tracks}</td><td style="color:var(--text3)">${date(a.last_checked)}</td></tr>`).join('')}</tbody></table>`
+        ? `<table><thead><tr><th>Album</th><th>Tracks</th><th>Vérifié</th></tr></thead><tbody>
+            ${d.albums.map(a => `<tr>
+              <td style="color:var(--text)">${esc(a.album_name)}</td>
+              <td style="color:var(--accent)">${a.total_tracks}</td>
+              <td style="color:var(--text3)">${date(a.last_checked)}</td>
+            </tr>`).join('')}
+           </tbody></table>`
         : '<div style="font-size:11px;color:var(--text3)">Aucun album scanné</div>'
       }
     </div>`;

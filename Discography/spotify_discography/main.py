@@ -16,7 +16,7 @@ Logique de cycle :
   3. Pour chaque artiste :
        a. get_new_tracks_for_artist() → accumule les tracks (checkpoint album géré
           dans discography_service)
-       b. add_tracks() → un seul appel Spotify en fin d'artiste
+       b. add_tracks() → dispatche sur un ou plusieurs slots Spotify
        c. upsert_artist(last_scan=now)
        d. clear_album_checkpoint()
 
@@ -27,7 +27,6 @@ Logique de cycle :
        d. Reprise : l'artiste interrompu est prioritaire via album_checkpoint
 
   5. Fin de cycle → retour en 1 sans attente fixe
-     (le refresh followed remplace CYCLE_MIN_INTERVAL comme garde-fou naturel)
 """
 
 import time
@@ -162,11 +161,6 @@ def _daemon_worker(port: int):
     excluded_repo = SQLiteExcludedRepository(config.STATE_DB_PATH)
 
     # ── Pré-chargement de followed_map depuis la DB au démarrage ──────────
-    # Évite le refresh Spotify systématique si des artistes sont déjà connus
-    # et que le cycle précédent n'est pas terminé (checkpoints actifs ou
-    # artistes avec last_scan == 0).
-    # La condition de refresh dans la boucle (all_followed_scanned) décidera
-    # proprement si un appel à /me/following est nécessaire.
     known_artists = state_repo.get_all_artists()
     if known_artists:
         followed_map: dict = {
@@ -309,10 +303,8 @@ def _daemon_worker(port: int):
                 ).get("artist_name", artist_id)
             )
 
-            # Artiste désabonné mais checkpoint actif → on termine son scan
-            # puis on passe (pas d'ajout à excluded, pas de playlist créée)
-            is_followed = artist_id in followed_ids
-
+            is_followed   = artist_id in followed_ids
+            # Le nom de base de la playlist (slot 1) — utilisé pour les logs
             playlist_name = f"{artist_name} - Discography"
 
             logger.info(
@@ -334,68 +326,54 @@ def _daemon_worker(port: int):
             artist_start = time.time()
 
             try:
-                # ── a. Playlist ────────────────────────────────────────────
-                # On charge l'état DB une seule fois pour cet artiste
+                # ── a. Playlist slot 1 (rétrocompat DB artists.playlist_id) ──
                 db_artist = state_repo.get_artist(artist_id)
 
                 if is_followed:
+                    # Assure l'existence d'au moins le slot 1 et retourne
+                    # l'id du slot courant non plein (peut en créer un nouveau)
                     playlist_id = playlist_svc.get_or_create_playlist(
-                        artist_id, playlist_name
+                        artist_id, artist_name
                     )
+                    # Synchronise artists.playlist_id avec le slot 1
+                    slots = state_repo.get_artist_playlists(artist_id)
+                    slot1_pid = slots[0]["playlist_id"] if slots else playlist_id
                     state_repo.upsert_artist(artist_id, {
                         "artist_name": artist_name,
-                        "playlist_id": playlist_id,
+                        "playlist_id": slot1_pid,
                         "last_scan":   db_artist.get("last_scan", 0.0) if db_artist else 0.0,
                     })
                 else:
-                    # Artiste désabonné : récupère l'id depuis la DB
-                    playlist_id = db_artist.get("playlist_id") if db_artist else None
+                    # Artiste désabonné : récupère le slot 1 depuis la DB
+                    slots = state_repo.get_artist_playlists(artist_id)
+                    playlist_id = slots[0]["playlist_id"] if slots else (
+                        db_artist.get("playlist_id") if db_artist else None
+                    )
 
                 # ── b. Scan albums → accumulation tracks ───────────────────
                 new_tracks = discography_svc.get_new_tracks_for_artist(
                     artist_id, artist_name
                 )
 
-                # ── c. Ajout à la playlist (un seul bloc) ──────────────────
-                if playlist_id and new_tracks:
+                # ── c. Ajout à la (aux) playlist(s) ───────────────────────
+                # add_tracks gère lui-même le dispatch multi-slots.
+                # On passe artist_name pour qu'il puisse créer de nouveaux
+                # slots si nécessaire.
+                if new_tracks:
                     added = playlist_svc.add_tracks(
-                        playlist_id, artist_id, new_tracks
+                        artist_id, artist_name, new_tracks
                     )
                 else:
                     added = 0
-                    if new_tracks and not playlist_id:
-                        logger.warning(
-                            "Artiste '%s' : %d tracks trouvées mais pas de playlist",
-                            artist_name, len(new_tracks),
-                        )
-
-                stats["tracks_added"]      += added
-                stats["artists_processed"] += 1
-
-                # ── d. Finalisation ────────────────────────────────────────
-                state_repo.upsert_artist(artist_id, {
-                    "artist_name": artist_name,
-                    "playlist_id": playlist_id,
-                    "last_scan":   time.time(),
-                })
-                state_repo.clear_album_checkpoint(artist_id)
-                state_repo.update_daemon_artist_idx(idx + 1)
-
-                _update_artist_status(artists_run, artist_id, "done", added)
-                logger.info(
-                    "Artiste '%s' terminé en %.1fs | %d tracks ajoutées",
-                    artist_name, time.time() - artist_start, added,
-                )
 
             except RateLimitError as e:
-                # L'album_checkpoint est déjà à jour (géré dans discography_service)
+                # Idem ancien code — checkpoint déjà à jour
                 logger.warning(
                     "429 sur artiste '%s' — checkpoint idx=%d, attente %.1fs",
                     artist_name, idx, e.retry_after,
                 )
                 state_repo.save_daemon_state(0.0, cycle_start, idx)
 
-                # Persiste l'intervalle rate limit
                 ci = client._current_interval
                 state_repo.save_rate_limit_interval(
                     start_ts=ci["start_ts"],
@@ -409,9 +387,7 @@ def _daemon_worker(port: int):
                 dashboard_server.update_run_state(
                     status="rate_limited",
                     current_artist=artist_name,
-                    stats={
-                        "retry_after_last": e.retry_after,
-                    },
+                    stats={"retry_after_last": e.retry_after},
                 )
                 if _tray:
                     _tray.set_running(False)
@@ -435,8 +411,6 @@ def _daemon_worker(port: int):
                 if _tray:
                     _tray.set_running(True)
 
-                # L'artiste interrompu sera prioritaire au prochain tour
-                # grâce à son album_checkpoint actif dans get_ordered_artist_ids
                 rate_limited = True
                 break
 
@@ -446,6 +420,44 @@ def _daemon_worker(port: int):
                     "ERREUR artiste '%s' (%s) : %s",
                     artist_name, artist_id, e, exc_info=True,
                 )
+                # Continue avec l'artiste suivant
+                dashboard_server.update_run_state(
+                    current_idx=idx + 1,
+                    artists_run=artists_run,
+                    stats={
+                        "artists_processed": stats["artists_processed"],
+                        "artists_skipped":   stats["artists_skipped"],
+                        "tracks_added":      stats["tracks_added"],
+                        "api_total_calls":   client.total_calls,
+                        "api_429":           client.stats.get("429", 0),
+                        "api_5xx":           client.stats.get("5xx", 0),
+                        "api_detail":        dict(client.stats),
+                    },
+                )
+                time.sleep(config.DELAY_BETWEEN_ARTISTS)
+                continue
+
+            # ── d. Finalisation artiste ────────────────────────────────────
+            stats["tracks_added"]      += added
+            stats["artists_processed"] += 1
+
+            # Récupère le slot 1 à jour pour artists.playlist_id
+            slots     = state_repo.get_artist_playlists(artist_id)
+            slot1_pid = slots[0]["playlist_id"] if slots else None
+
+            state_repo.upsert_artist(artist_id, {
+                "artist_name": artist_name,
+                "playlist_id": slot1_pid,
+                "last_scan":   time.time(),
+            })
+            state_repo.clear_album_checkpoint(artist_id)
+            state_repo.update_daemon_artist_idx(idx + 1)
+
+            _update_artist_status(artists_run, artist_id, "done", added)
+            logger.info(
+                "Artiste '%s' terminé en %.1fs | %d tracks ajoutées",
+                artist_name, time.time() - artist_start, added,
+            )
 
             dashboard_server.update_run_state(
                 current_idx=idx + 1,
@@ -463,7 +475,7 @@ def _daemon_worker(port: int):
 
             time.sleep(config.DELAY_BETWEEN_ARTISTS)
 
-        # ── Reprise après 429 : recommence le while sans attente ───────────
+        # ── Reprise après 429 ──────────────────────────────────────────────
         if rate_limited and not _stop_event.is_set():
             logger.info(
                 "Reprise du cycle %d après 429 — l'artiste interrompu "
@@ -522,8 +534,6 @@ def _daemon_worker(port: int):
                 f"{stats['tracks_added']} tracks ajoutées",
             )
 
-        # Attente minimale entre deux cycles pour éviter un spin tight
-        # quand tous les artistes sont récents (SCAN_INTERVAL pas encore écoulé)
         _stop_event.wait(timeout=config.CYCLE_MIN_INTERVAL)
 
     # ── Arrêt propre ──────────────────────────────────────────────────────
@@ -542,7 +552,6 @@ def _handle_rate_limit(
     cycle_start: float,
     idx: int,
 ):
-    """Sauvegarde et attend sur un 429 survenu hors boucle artistes."""
     logger.warning("429 hors boucle artistes — attente %.1fs", e.retry_after)
 
     ci = client._current_interval

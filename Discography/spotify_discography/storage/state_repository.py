@@ -14,6 +14,7 @@ class SQLiteStateRepository(StateRepository):
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._create_tables()
+        self._migrate()
 
     def _create_tables(self):
         self._conn.executescript("""
@@ -39,10 +40,21 @@ class SQLiteStateRepository(StateRepository):
                 PRIMARY KEY (artist_id, track_id)
             );
 
+            -- Multi-playlists par artiste.
+            -- slot = 1 pour la première playlist ("Artiste - Discography"),
+            --        2 pour la deuxième ("Artiste 2 - Discography"), etc.
+            -- track_count : nombre de tracks Spotify connues dans ce slot
+            --               (mis à jour à chaque ajout ; sert à savoir
+            --                dans quel slot écrire ensuite).
+            CREATE TABLE IF NOT EXISTS artist_playlists (
+                artist_id   TEXT    NOT NULL REFERENCES artists(artist_id),
+                slot        INTEGER NOT NULL,
+                playlist_id TEXT    NOT NULL,
+                track_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (artist_id, slot)
+            );
+
             -- Reprise sur interruption (niveau album)
-            -- album_ids      : JSON array des album_id dans l'ordre du scan
-            -- last_album_idx : index du dernier album complètement traité
-            --                  -1 = aucun album terminé, reprendre à 0
             CREATE TABLE IF NOT EXISTS album_checkpoint (
                 artist_id      TEXT PRIMARY KEY,
                 album_ids      TEXT    NOT NULL,
@@ -67,10 +79,6 @@ class SQLiteStateRepository(StateRepository):
             );
 
             -- État persistant du daemon
-            -- last_followed_refresh : timestamp du dernier rechargement
-            --   des artistes suivis (mis à jour uniquement quand tous les
-            --   artistes ont été traités, i.e. aucun last_scan == 0)
-            -- cycle_started_at / cycle_artist_idx : position dans le cycle
             CREATE TABLE IF NOT EXISTS daemon_state (
                 id                    INTEGER PRIMARY KEY CHECK (id = 1),
                 last_followed_refresh REAL    NOT NULL DEFAULT 0,
@@ -97,8 +105,45 @@ class SQLiteStateRepository(StateRepository):
                 ON unavailable_tracks(artist_id);
             CREATE INDEX IF NOT EXISTS idx_removed_artist
                 ON removed_tracks(artist_id);
+            CREATE INDEX IF NOT EXISTS idx_artist_playlists_artist
+                ON artist_playlists(artist_id);
         """)
         self._conn.commit()
+
+    def _migrate(self):
+        """
+        Migration automatique depuis l'ancien schéma (playlist_id dans artists)
+        vers la nouvelle table artist_playlists.
+
+        Détecte les artistes qui ont un playlist_id dans `artists` mais aucune
+        entrée dans `artist_playlists`, et crée le slot 1 correspondant.
+        Le track_count est initialisé à 0 ; il sera corrigé à la prochaine
+        exécution de load_existing_playlists() dans PlaylistService.
+        """
+        rows = self._conn.execute("""
+            SELECT a.artist_id, a.playlist_id
+            FROM artists a
+            LEFT JOIN artist_playlists ap
+                ON ap.artist_id = a.artist_id AND ap.slot = 1
+            WHERE a.playlist_id IS NOT NULL
+              AND ap.artist_id IS NULL
+        """).fetchall()
+
+        if not rows:
+            return
+
+        self._conn.executemany("""
+            INSERT OR IGNORE INTO artist_playlists
+                (artist_id, slot, playlist_id, track_count)
+            VALUES (?, 1, ?, 0)
+        """, [(r["artist_id"], r["playlist_id"]) for r in rows])
+        self._conn.commit()
+
+        import logging
+        logging.getLogger("spotify_discography").info(
+            "Migration : %d artiste(s) migrés vers artist_playlists (slot 1)",
+            len(rows),
+        )
 
     # ── Artists ───────────────────────────────────────────────────────────────
 
@@ -131,84 +176,45 @@ class SQLiteStateRepository(StateRepository):
         return [dict(r) for r in rows]
 
     def get_ordered_artist_ids(self, followed_ids: set) -> list:
-        """
-        Retourne la liste ordonnée des artist_id à traiter dans ce cycle :
-
-          1. Artistes avec un album_checkpoint actif (reprise prioritaire)
-             → dans l'ordre de last_scan ASC pour être déterministe
-          2. Artistes suivis jamais traités (last_scan == 0, pas de checkpoint)
-          3. Artistes suivis déjà traités, triés par last_scan ASC
-             (le plus ancien d'abord)
-
-        Seuls les artistes présents dans followed_ids sont inclus,
-        plus les artistes en cours de checkpoint même s'ils ont été
-        désabonnés (pour terminer proprement leur scan en cours).
-        """
-        # Artistes avec checkpoint actif
         checkpoint_ids = {
             r[0] for r in self._conn.execute(
                 "SELECT artist_id FROM album_checkpoint"
             ).fetchall()
         }
-
-        # Tous les artistes connus en DB avec leur last_scan
         known = {
             r["artist_id"]: r["last_scan"]
             for r in self._conn.execute(
                 "SELECT artist_id, last_scan FROM artists"
             ).fetchall()
         }
-
-        # Groupe 1 : checkpoint actif (qu'ils soient encore suivis ou non)
-        group1 = sorted(
-            checkpoint_ids,
-            key=lambda aid: known.get(aid, 0.0),
-        )
-
-        # Groupe 2 : suivis, jamais traités, sans checkpoint
+        group1 = sorted(checkpoint_ids, key=lambda aid: known.get(aid, 0.0))
         group2 = [
             aid for aid in followed_ids
-            if aid not in checkpoint_ids
-            and known.get(aid, 0.0) == 0.0
+            if aid not in checkpoint_ids and known.get(aid, 0.0) == 0.0
         ]
-
-        # Groupe 3 : suivis, déjà traités, sans checkpoint, triés par last_scan ASC
         group3 = sorted(
             [
                 aid for aid in followed_ids
-                if aid not in checkpoint_ids
-                and known.get(aid, 0.0) > 0.0
+                if aid not in checkpoint_ids and known.get(aid, 0.0) > 0.0
             ],
             key=lambda aid: known.get(aid, 0.0),
         )
-
         return group1 + group2 + group3
 
     def all_followed_scanned(self, followed_ids: set) -> bool:
-        """
-        Retourne True si tous les artistes suivis ont été traités au moins
-        une fois (last_scan > 0) ET qu'aucun album_checkpoint n'est actif.
-
-        C'est la condition pour déclencher un refresh de la liste des suivis.
-        """
         if not followed_ids:
             return False
-
-        # S'il reste des checkpoints actifs, le cycle n'est pas terminé
         pending = self._conn.execute(
             "SELECT COUNT(*) FROM album_checkpoint"
         ).fetchone()[0]
         if pending > 0:
             return False
-
-        # S'il reste des artistes suivis avec last_scan == 0
         placeholders = ",".join("?" * len(followed_ids))
         unscanned = self._conn.execute(
             f"SELECT COUNT(*) FROM artists "
             f"WHERE artist_id IN ({placeholders}) AND last_scan = 0",
             list(followed_ids),
         ).fetchone()[0]
-
         return unscanned == 0
 
     # ── Albums ────────────────────────────────────────────────────────────────
@@ -244,11 +250,6 @@ class SQLiteStateRepository(StateRepository):
         album_ids: list,
         last_album_idx: int,
     ) -> None:
-        """
-        Crée ou met à jour le checkpoint album pour un artiste.
-        album_ids  : liste ordonnée des album_id telle que récupérée depuis Spotify.
-        last_album_idx : index du dernier album complètement traité (-1 si aucun).
-        """
         self._conn.execute("""
             INSERT INTO album_checkpoint (artist_id, album_ids, last_album_idx)
             VALUES (?, ?, ?)
@@ -259,10 +260,6 @@ class SQLiteStateRepository(StateRepository):
         self._conn.commit()
 
     def load_album_checkpoint(self, artist_id: str) -> Optional[dict]:
-        """
-        Retourne le checkpoint album pour un artiste, ou None s'il n'existe pas.
-        Retourne : { "album_ids": [...], "last_album_idx": int }
-        """
         row = self._conn.execute(
             "SELECT album_ids, last_album_idx FROM album_checkpoint WHERE artist_id = ?",
             (artist_id,),
@@ -275,7 +272,6 @@ class SQLiteStateRepository(StateRepository):
         }
 
     def clear_album_checkpoint(self, artist_id: str) -> None:
-        """Supprime le checkpoint album une fois l'artiste entièrement traité."""
         self._conn.execute(
             "DELETE FROM album_checkpoint WHERE artist_id = ?", (artist_id,)
         )
@@ -284,6 +280,12 @@ class SQLiteStateRepository(StateRepository):
     # ── Playlist tracks ───────────────────────────────────────────────────────
 
     def get_playlist_tracks(self, artist_id: str) -> set:
+        """
+        Retourne l'union des track_id présentes dans TOUTES les playlists
+        de cet artiste (table playlist_tracks, indexée par artist_id).
+        Cette méthode est la source de vérité pour savoir si une track
+        a déjà été ajoutée, quel que soit le slot.
+        """
         rows = self._conn.execute(
             "SELECT track_id FROM playlist_tracks WHERE artist_id = ?", (artist_id,)
         ).fetchall()
@@ -305,6 +307,63 @@ class SQLiteStateRepository(StateRepository):
                 "INSERT OR IGNORE INTO playlist_tracks VALUES (?, ?)",
                 [(artist_id, tid) for tid in track_ids],
             )
+
+    # ── Multi-playlists (slots) ───────────────────────────────────────────────
+
+    def get_artist_playlists(self, artist_id: str) -> list:
+        """
+        Retourne la liste des slots pour un artiste, triée par slot ASC.
+        Chaque élément : { "slot": int, "playlist_id": str, "track_count": int }
+        """
+        rows = self._conn.execute(
+            "SELECT slot, playlist_id, track_count "
+            "FROM artist_playlists WHERE artist_id = ? ORDER BY slot ASC",
+            (artist_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def upsert_artist_playlist(
+        self,
+        artist_id: str,
+        slot: int,
+        playlist_id: str,
+        track_count: int,
+    ) -> None:
+        """Crée ou met à jour un slot playlist pour un artiste."""
+        self._conn.execute("""
+            INSERT INTO artist_playlists (artist_id, slot, playlist_id, track_count)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(artist_id, slot) DO UPDATE SET
+                playlist_id = excluded.playlist_id,
+                track_count = excluded.track_count
+        """, (artist_id, slot, playlist_id, track_count))
+        self._conn.commit()
+
+    def increment_artist_playlist_track_count(
+        self,
+        artist_id: str,
+        slot: int,
+        delta: int,
+    ) -> None:
+        """Incrémente le compteur de tracks d'un slot donné."""
+        self._conn.execute("""
+            UPDATE artist_playlists
+            SET track_count = track_count + ?
+            WHERE artist_id = ? AND slot = ?
+        """, (delta, artist_id, slot))
+        self._conn.commit()
+
+    def get_artist_playlist_track_count(
+        self,
+        artist_id: str,
+        slot: int,
+    ) -> int:
+        """Retourne le nombre de tracks actuellement dans ce slot (cache local)."""
+        row = self._conn.execute(
+            "SELECT track_count FROM artist_playlists WHERE artist_id = ? AND slot = ?",
+            (artist_id, slot),
+        ).fetchone()
+        return row["track_count"] if row else 0
 
     # ── Daemon state ──────────────────────────────────────────────────────────
 

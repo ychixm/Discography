@@ -77,13 +77,59 @@ class StateRepository(ABC):
     # ── Playlist tracks ───────────────────────────────────────────────────────
 
     @abstractmethod
-    def get_playlist_tracks(self, artist_id: str) -> set: ...
+    def get_playlist_tracks(self, artist_id: str) -> set:
+        """
+        Retourne l'union des track_id présentes dans TOUTES les playlists
+        de cet artiste (tous slots confondus).
+        Utilisé pour calculer les nouvelles tracks à ajouter.
+        """
+        ...
 
     @abstractmethod
     def set_playlist_tracks(self, artist_id: str, track_ids: set) -> None: ...
 
     @abstractmethod
     def add_playlist_tracks(self, artist_id: str, track_ids: set) -> None: ...
+
+    # ── Multi-playlists (slots) ───────────────────────────────────────────────
+
+    @abstractmethod
+    def get_artist_playlists(self, artist_id: str) -> list:
+        """
+        Retourne la liste des slots pour un artiste, triée par slot ASC.
+        Chaque élément : { "slot": int, "playlist_id": str, "track_count": int }
+        """
+        ...
+
+    @abstractmethod
+    def upsert_artist_playlist(
+        self,
+        artist_id: str,
+        slot: int,
+        playlist_id: str,
+        track_count: int,
+    ) -> None:
+        """Crée ou met à jour un slot playlist pour un artiste."""
+        ...
+
+    @abstractmethod
+    def increment_artist_playlist_track_count(
+        self,
+        artist_id: str,
+        slot: int,
+        delta: int,
+    ) -> None:
+        """Incrémente le compteur de tracks d'un slot donné."""
+        ...
+
+    @abstractmethod
+    def get_artist_playlist_track_count(
+        self,
+        artist_id: str,
+        slot: int,
+    ) -> int:
+        """Retourne le nombre de tracks actuellement dans ce slot (cache local)."""
+        ...
 
     # ── Daemon state ──────────────────────────────────────────────────────────
 

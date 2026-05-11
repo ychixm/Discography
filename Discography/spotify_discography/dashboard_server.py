@@ -9,7 +9,7 @@ Routes GET :
   /api/run                      → état courant du daemon (statut, stats, logs)
   /api/db/stats                 → compteurs globaux de la base
   /api/db/albums                → liste des albums (limit=N)
-  /api/db/playlists             → liste des playlists
+  /api/db/playlists             → liste des playlists (tous slots)
   /api/db/excluded              → artistes exclus
   /api/db/removed-tracks        → tracks retirées manuellement
   /api/db/unavailable-tracks    → tracks indisponibles
@@ -107,10 +107,10 @@ def _db_connect() -> sqlite3.Connection:
 
 def _db_stats() -> dict:
     try:
-        conn     = _db_connect()
-        artists  = conn.execute("SELECT COUNT(*) FROM artists").fetchone()[0]
-        albums   = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
-        tracks   = conn.execute(
+        conn    = _db_connect()
+        artists = conn.execute("SELECT COUNT(*) FROM artists").fetchone()[0]
+        albums  = conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0]
+        tracks  = conn.execute(
             "SELECT COUNT(*) FROM playlist_tracks"
         ).fetchone()[0]
         excluded = 0
@@ -127,6 +127,14 @@ def _db_stats() -> dict:
             ).fetchone()[0]
         except Exception:
             pass
+        # Nombre total de slots playlists
+        playlist_slots = 0
+        try:
+            playlist_slots = conn.execute(
+                "SELECT COUNT(*) FROM artist_playlists"
+            ).fetchone()[0]
+        except Exception:
+            pass
         conn.close()
         return {
             "artists":           artists,
@@ -134,6 +142,7 @@ def _db_stats() -> dict:
             "playlist_tracks":   tracks,
             "excluded_artists":  excluded,
             "album_checkpoints": checkpoints,
+            "playlist_slots":    playlist_slots,
             "db_path":           config.STATE_DB_PATH,
         }
     except Exception as e:
@@ -158,20 +167,62 @@ def _albums_list(limit: int = 200) -> list:
 
 
 def _playlists_list() -> list:
+    """
+    Retourne la liste de toutes les playlists, tous slots confondus.
+    Chaque ligne contient : artist_id, artist_name, slot, playlist_id, track_count.
+    Utilise artist_playlists si disponible, sinon fallback sur artists.playlist_id.
+    """
     try:
         conn = _db_connect()
-        rows = conn.execute("""
-            SELECT ar.artist_id, ar.artist_name, ar.playlist_id,
-                   COUNT(pt.track_id) AS track_count
-            FROM artists ar
-            LEFT JOIN playlist_tracks pt ON pt.artist_id = ar.artist_id
-            WHERE ar.playlist_id IS NOT NULL
-            GROUP BY ar.artist_id
-            ORDER BY track_count DESC
-            LIMIT 200
-        """).fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
+
+        # Vérifie si la table artist_playlists existe
+        has_ap = conn.execute("""
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type='table' AND name='artist_playlists'
+        """).fetchone()[0]
+
+        if has_ap:
+            rows = conn.execute("""
+                SELECT
+                    ap.artist_id,
+                    ar.artist_name,
+                    ap.slot,
+                    ap.playlist_id,
+                    ap.track_count,
+                    -- Nombre réel depuis playlist_tracks (source de vérité)
+                    COUNT(pt.track_id) AS track_count_db
+                FROM artist_playlists ap
+                JOIN artists ar ON ar.artist_id = ap.artist_id
+                LEFT JOIN playlist_tracks pt ON pt.artist_id = ap.artist_id
+                GROUP BY ap.artist_id, ap.slot
+                ORDER BY ar.artist_name ASC, ap.slot ASC
+                LIMIT 500
+            """).fetchall()
+            conn.close()
+            result = []
+            for r in rows:
+                d = dict(r)
+                # Préfère le compteur Spotify stocké (track_count) qui est
+                # par slot, mais affiche aussi le total DB pour info.
+                d["total_tracks_db"] = d.pop("track_count_db", 0)
+                result.append(d)
+            return result
+        else:
+            # Fallback ancien schéma
+            rows = conn.execute("""
+                SELECT ar.artist_id, ar.artist_name,
+                       1 AS slot,
+                       ar.playlist_id,
+                       COUNT(pt.track_id) AS track_count
+                FROM artists ar
+                LEFT JOIN playlist_tracks pt ON pt.artist_id = ar.artist_id
+                WHERE ar.playlist_id IS NOT NULL
+                GROUP BY ar.artist_id
+                ORDER BY track_count DESC
+                LIMIT 200
+            """).fetchall()
+            conn.close()
+            return [dict(r) for r in rows]
     except Exception as e:
         return [{"error": str(e)}]
 
@@ -246,7 +297,28 @@ def _artist_detail(artist_id: str) -> dict:
         ).fetchone()[0]
         artist["track_count"] = track_count
 
-        # Checkpoint album actif ?
+        # Slots playlists
+        has_ap = conn.execute("""
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type='table' AND name='artist_playlists'
+        """).fetchone()[0]
+
+        if has_ap:
+            slots = conn.execute("""
+                SELECT slot, playlist_id, track_count
+                FROM artist_playlists
+                WHERE artist_id = ?
+                ORDER BY slot ASC
+            """, (artist_id,)).fetchall()
+            artist["playlists"] = [dict(s) for s in slots]
+        else:
+            # Fallback : construit un slot fictif depuis artists.playlist_id
+            artist["playlists"] = (
+                [{"slot": 1, "playlist_id": artist["playlist_id"], "track_count": track_count}]
+                if artist.get("playlist_id") else []
+            )
+
+        # Checkpoint album actif
         cp = conn.execute(
             "SELECT album_ids, last_album_idx FROM album_checkpoint "
             "WHERE artist_id = ?",
@@ -255,9 +327,9 @@ def _artist_detail(artist_id: str) -> dict:
         if cp:
             album_ids = json.loads(cp["album_ids"])
             artist["checkpoint"] = {
-                "total_albums":    len(album_ids),
-                "last_album_idx":  cp["last_album_idx"],
-                "albums_done":     cp["last_album_idx"] + 1,
+                "total_albums":     len(album_ids),
+                "last_album_idx":   cp["last_album_idx"],
+                "albums_done":      cp["last_album_idx"] + 1,
                 "albums_remaining": len(album_ids) - (cp["last_album_idx"] + 1),
             }
         else:
@@ -270,10 +342,6 @@ def _artist_detail(artist_id: str) -> dict:
 
 
 def _album_checkpoints_list() -> list:
-    """
-    Retourne les checkpoints album actifs avec le nom de l'artiste
-    et la progression (albums faits / total).
-    """
     try:
         conn = _db_connect()
         rows = conn.execute("""
@@ -288,7 +356,7 @@ def _album_checkpoints_list() -> list:
         for r in rows:
             album_ids = json.loads(r["album_ids"])
             total     = len(album_ids)
-            done      = r["last_album_idx"] + 1   # -1 → 0 fait
+            done      = r["last_album_idx"] + 1
             result.append({
                 "artist_id":         r["artist_id"],
                 "artist_name":       r["artist_name"] or r["artist_id"],
@@ -470,7 +538,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path   = parsed.path.rstrip("/") or "/"
         qs     = parse_qs(parsed.query)
 
-        # ── Pages HTML ────────────────────────────────────────────────────
         if path in ("/", "/index.html"):
             self._send_file(os.path.join(DASHBOARD_DIR, "index.html"))
             return
@@ -479,7 +546,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_file(os.path.join(DASHBOARD_DIR, "setup.html"))
             return
 
-        # ── API run state ─────────────────────────────────────────────────
         if path == "/api/run":
             with _run_lock:
                 data = dict(_run_state)
@@ -495,7 +561,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     }
             self._send_json(data)
 
-        # ── API DB ────────────────────────────────────────────────────────
         elif path == "/api/db/stats":
             self._send_json(_db_stats())
 
@@ -532,7 +597,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/db/rate-limit-stats":
             self._send_json(_rate_limit_stats())
 
-        # ── Fichiers statiques ────────────────────────────────────────────
         else:
             file_path = os.path.join(DASHBOARD_DIR, path.lstrip("/"))
             if os.path.isfile(file_path):
