@@ -15,7 +15,7 @@ ajoutée deux fois quelle que soit la playlist dans laquelle elle se trouve.
 
 load_existing_playlists() reconnaît les deux patterns de nommage et
 synchronise les slots en DB, y compris la mise à jour des track_count
-depuis Spotify (appel /playlists/{id}?fields=tracks(total)).
+depuis Spotify (appel /playlists/{id}?fields=tracks(total),items(total)).
 """
 
 import logging
@@ -68,6 +68,9 @@ class PlaylistService:
         self._me_id  = me_id
         # Cache RAM : playlist_name → playlist_id (tous slots, tous artistes)
         self._name_to_id: dict = {}
+        # Cache RAM : ensemble des playlist_id valides côté Spotify
+        # (utilisé pour détecter les slots DB orphelins)
+        self._valid_playlist_ids: set = set()
 
     # ── Chargement initial ────────────────────────────────────────────────────
 
@@ -93,6 +96,8 @@ class PlaylistService:
         ]
         # Reconstruit le cache RAM nom → id
         self._name_to_id = {p["name"]: p["id"] for p in my_playlists}
+        # Cache des IDs valides pour la détection des slots orphelins
+        self._valid_playlist_ids = set(self._name_to_id.values())
 
         # Synchronise chaque artiste connu
         for artist in self._repo.get_all_artists():
@@ -111,10 +116,33 @@ class PlaylistService:
         crée / met à jour les entrées en DB et peuple artists.playlist_id
         (slot 1) pour la rétrocompatibilité du dashboard.
 
+        Avant la synchronisation, on détecte les slots DB dont la playlist_id
+        n'est plus dans la liste Spotify de l'utilisateur. Ces slots peuvent
+        provenir de :
+          - une playlist supprimée côté Spotify ;
+          - une playlist renommée (le nom ne correspond plus au pattern) ;
+          - une perte d'accès (playlist transférée, compte changé).
+        On les logue mais on ne les supprime PAS automatiquement, par mesure
+        de prudence — l'utilisateur peut faire le ménage manuellement.
+
         Chaque track_count est récupéré depuis Spotify puis immédiatement
         sauvegardé en DB pour que la valeur soit persistée même si
         load_existing_playlists() est interrompue à mi-chemin.
         """
+        # ── Détection des slots orphelins (playlist_id inconnue côté Spotify) ──
+        existing_slots = self._repo.get_artist_playlists(artist_id)
+        for slot_info in existing_slots:
+            pid = slot_info["playlist_id"]
+            if pid and pid not in self._valid_playlist_ids:
+                logger.warning(
+                    "Slot %d de '%s' (%s) introuvable dans les playlists "
+                    "Spotify de l'utilisateur — l'entrée DB est conservée "
+                    "mais ne sera pas re-synchronisée (playlist supprimée, "
+                    "renommée ou inaccessible). Le track_count restera figé.",
+                    slot_info["slot"], artist_name, pid,
+                )
+
+        # ── Synchronisation normale des slots reconnus par nom ────────────
         slot = 1
         while True:
             name = playlist_name_for_slot(artist_name, slot)
@@ -154,36 +182,58 @@ class PlaylistService:
         Interroge Spotify pour connaître le nombre de tracks dans une playlist.
         Retourne 0 en cas d'erreur (défensif).
 
-        Note : le paramètre fields=tracks.total s'avère non fiable sur certaines
-        playlists (champ 'tracks' absent de la réponse). On interroge directement
-        l'endpoint complet pour garantir la cohérence, au prix d'une réponse
-        légèrement plus volumineuse.
+        Compatibilité migration API Spotify :
+          La doc GET /playlists/{id} marque le champ "tracks" comme deprecated
+          et indique : "Deprecated: Use items instead."
+          (réf : https://developer.spotify.com/documentation/web-api/reference/get-playlist)
+
+          On demande explicitement les deux variantes via fields= pour réduire
+          le volume de réponse, puis on lit en priorité le nouveau champ
+          "items.total", avec fallback sur l'ancien "tracks.total" pour
+          rester compatible avec les playlists/régions encore sur l'ancien
+          schéma.
         """
         try:
             logger.debug(
                 "FETCH track_count playlist %s", playlist_id,
             )
-            r    = self._client.get(f"{config.API_BASE}/playlists/{playlist_id}")
+            r = self._client.get(
+                f"{config.API_BASE}/playlists/{playlist_id}",
+                params={"fields": "tracks(total),items(total)"},
+            )
             data = r.json()
 
-            tracks = data.get("tracks")
-            if isinstance(tracks, dict):
-                count = int(tracks.get("total", 0))
+            # Nouveau champ "items" (post-migration Spotify)
+            items_obj = data.get("items")
+            if isinstance(items_obj, dict) and "total" in items_obj:
+                count = int(items_obj["total"])
                 logger.debug(
-                    "FETCH track_count playlist %s → %d tracks",
+                    "FETCH track_count playlist %s → %d tracks (via 'items')",
                     playlist_id, count,
                 )
                 return count
 
-            # Réponse structurellement inattendue — on logue et retourne 0
+            # Ancien champ "tracks" (deprecated mais encore renvoyé sur
+            # certaines playlists / régions)
+            tracks_obj = data.get("tracks")
+            if isinstance(tracks_obj, dict) and "total" in tracks_obj:
+                count = int(tracks_obj["total"])
+                logger.debug(
+                    "FETCH track_count playlist %s → %d tracks (via 'tracks' deprecated)",
+                    playlist_id, count,
+                )
+                return count
+
+            # Réponse structurellement inattendue
             logger.warning(
-                "Réponse inattendue pour GET /playlists/%s "
-                "(champ 'tracks' : %r) — track_count=0 utilisé par défaut",
-                playlist_id, tracks,
+                "Réponse sans champ 'items' ni 'tracks' pour GET /playlists/%s "
+                "(items=%r, tracks=%r) — track_count=0 utilisé par défaut",
+                playlist_id, items_obj, tracks_obj,
             )
             return 0
 
         except Exception as e:
+            # 403 / 404 / réseau / etc. → message clair, on retourne 0
             logger.warning(
                 "Impossible de lire le track_count de la playlist %s : %s — "
                 "valeur 0 utilisée par défaut",
@@ -235,6 +285,9 @@ class PlaylistService:
 
         self._repo.upsert_artist_playlist(artist_id, slot, pid, track_count=0)
         self._name_to_id[name] = pid
+        # Maintien à jour du cache des IDs valides (pour la détection orphelins
+        # lors de runs ultérieurs sans recharger les playlists)
+        self._valid_playlist_ids.add(pid)
 
         # Rétrocompatibilité : met à jour artists.playlist_id pour slot 1
         if slot == 1:
